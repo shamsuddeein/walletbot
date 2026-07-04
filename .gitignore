@@ -24,3 +24,6 @@ celerybeat-schedule.db
 .vscode/
 *.swp
 *.swo
+
+# Codebase dump
+walletbot_codebase.txt
