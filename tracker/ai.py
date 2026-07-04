@@ -270,11 +270,11 @@ def understand_message(
         upper = line.upper()
         if upper.startswith("ACTION:"):
             result["type"] = "action"
-            result["action"] = line.split(":", 1)[1].strip().lower()
+            result["action"] = line.split(":", 1)[1].strip(" '\"[]()").lower()
         elif upper.startswith("ADDRESS:"):
-            result["address"] = line.split(":", 1)[1].strip()
+            result["address"] = line.split(":", 1)[1].strip(" '\"[]()")
         elif upper.startswith("NICKNAME:"):
-            result["nickname"] = line.split(":", 1)[1].strip()
+            result["nickname"] = line.split(":", 1)[1].strip(" '\"[]()")
         elif upper.startswith("REPLY:"):
             result["type"] = "reply"
             result["text"] = line.split(":", 1)[1].strip()
