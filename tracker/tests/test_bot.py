@@ -23,17 +23,8 @@ class BotConfirmationTests(IsolatedAsyncioTestCase):
 
     @patch("tracker.telegram_bot.cmd_add_wallet", new_callable=AsyncMock)
     @patch("tracker.telegram_bot.cmd_remove_wallet", new_callable=AsyncMock)
-    @patch("tracker.ai.understand_message")
-    async def test_add_wallet_triggers_confirmation(self, mock_understand_message, mock_cmd_remove, mock_cmd_add):
-        # Mock the AI's decision to add a wallet
-        mock_understand_message.return_value = {
-            "type": "action",
-            "action": "add_wallet",
-            "address": "SolanaAddress123",
-            "nickname": "Testy"
-        }
-
-        self.update.message.text = "Add wallet SolanaAddress123 as Testy"
+    async def test_add_wallet_triggers_confirmation(self, mock_cmd_remove, mock_cmd_add):
+        self.update.message.text = "add wallet 6oQadxW73dSQ2TQ429LcSauAxEEpsQfW3saT598m9PrY Testy"
         
         await cmd_natural_language(self.update, self.context)
         
@@ -43,12 +34,16 @@ class BotConfirmationTests(IsolatedAsyncioTestCase):
         # Verify it stored the pending action
         self.assertEqual(
             self.context.user_data.get("pending_action"),
-            {"action": "add_wallet", "address": "SolanaAddress123", "nickname": "Testy"}
+            {
+                "action": "add_wallet",
+                "address": "6oQadxW73dSQ2TQ429LcSauAxEEpsQfW3saT598m9PrY",
+                "nickname": "Testy"
+            }
         )
         
         # Verify user was prompted for confirmation
         self.update.message.reply_text.assert_any_call(
-            "I understood: add the wallet named Testy with address SolanaAddress123. Reply yes to confirm, or no to cancel.",
+            "I understood: add the wallet named Testy with address 6oQadxW73dSQ2TQ429LcSauAxEEpsQfW3saT598m9PrY. Reply yes to confirm, or no to cancel.",
             parse_mode=""
         )
 
@@ -57,7 +52,7 @@ class BotConfirmationTests(IsolatedAsyncioTestCase):
     async def test_confirm_yes_executes_action(self, mock_cmd_remove, mock_cmd_add):
         self.context.user_data["pending_action"] = {
             "action": "add_wallet",
-            "address": "SolanaAddress123",
+            "address": "6oQadxW73dSQ2TQ429LcSauAxEEpsQfW3saT598m9PrY",
             "nickname": "Testy"
         }
         
@@ -67,7 +62,7 @@ class BotConfirmationTests(IsolatedAsyncioTestCase):
         
         # Verify cmd_add_wallet was executed with the correct args
         mock_cmd_add.assert_called_once_with(self.update, self.context)
-        self.assertEqual(self.context.args, ["SolanaAddress123", "Testy"])
+        self.assertEqual(self.context.args, ["6oQadxW73dSQ2TQ429LcSauAxEEpsQfW3saT598m9PrY", "Testy"])
         
         # Verify pending_action is cleared
         self.assertNotIn("pending_action", self.context.user_data)
@@ -96,8 +91,7 @@ class BotConfirmationTests(IsolatedAsyncioTestCase):
 
     @patch("tracker.telegram_bot.cmd_add_wallet", new_callable=AsyncMock)
     @patch("tracker.telegram_bot.cmd_remove_wallet", new_callable=AsyncMock)
-    @patch("tracker.ai.understand_message")
-    async def test_invalid_input_reprompts(self, mock_understand_message, mock_cmd_remove, mock_cmd_add):
+    async def test_invalid_input_reprompts(self, mock_cmd_remove, mock_cmd_add):
         self.context.user_data["pending_action"] = {
             "action": "remove_wallet",
             "nickname": "Shamo"
@@ -107,10 +101,9 @@ class BotConfirmationTests(IsolatedAsyncioTestCase):
         
         await cmd_natural_language(self.update, self.context)
         
-        # Verify no commands executed and no NLP invoked
+        # Verify no commands executed
         mock_cmd_add.assert_not_called()
         mock_cmd_remove.assert_not_called()
-        mock_understand_message.assert_not_called()
         
         # Verify it re-prompts the confirmation
         self.update.message.reply_text.assert_called_once_with(
@@ -122,4 +115,45 @@ class BotConfirmationTests(IsolatedAsyncioTestCase):
         self.assertEqual(
             self.context.user_data.get("pending_action"),
             {"action": "remove_wallet", "nickname": "Shamo"}
+        )
+
+    @patch("tracker.telegram_bot.cmd_list_wallets", new_callable=AsyncMock)
+    async def test_list_wallets_command(self, mock_cmd_list):
+        self.update.message.text = "lists"
+        await cmd_natural_language(self.update, self.context)
+        mock_cmd_list.assert_called_once_with(self.update, self.context)
+
+    async def test_multistep_add_wallet(self):
+        # Step 1: Send just an address
+        self.update.message.text = "6oQadxW73dSQ2TQ429LcSauAxEEpsQfW3saT598m9PrY"
+        await cmd_natural_language(self.update, self.context)
+        
+        # Verify address is pending
+        self.assertEqual(
+            self.context.user_data.get("pending_add_address"),
+            "6oQadxW73dSQ2TQ429LcSauAxEEpsQfW3saT598m9PrY"
+        )
+        self.update.message.reply_text.assert_called_once_with(
+            "Great! I have the address. What nickname would you like to assign to this wallet?",
+            parse_mode=""
+        )
+        
+        # Step 2: Send nickname
+        self.update.message.text = "sol2"
+        self.update.message.reply_text.reset_mock()
+        await cmd_natural_language(self.update, self.context)
+        
+        # Verify pending address is cleared and confirmation gate is active
+        self.assertNotIn("pending_add_address", self.context.user_data)
+        self.assertEqual(
+            self.context.user_data.get("pending_action"),
+            {
+                "action": "add_wallet",
+                "address": "6oQadxW73dSQ2TQ429LcSauAxEEpsQfW3saT598m9PrY",
+                "nickname": "sol2"
+            }
+        )
+        self.update.message.reply_text.assert_called_once_with(
+            "I understood: add the wallet named sol2 with address 6oQadxW73dSQ2TQ429LcSauAxEEpsQfW3saT598m9PrY. Reply yes to confirm, or no to cancel.",
+            parse_mode=""
         )

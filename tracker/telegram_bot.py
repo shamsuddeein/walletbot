@@ -746,20 +746,16 @@ async def cmd_profile(update, context):
 async def cmd_natural_language(update, context):
     """
     Catch-all handler for plain English messages.
-    The AI interprets what the user wants and either replies or triggers an action.
+    Deterministic rule-based parser that handles commands, confirmation flow,
+    and multi-step adding of wallets without relying on external AI API.
     """
-    from tracker.models import Wallet, TokenBuy, MatchAlert
-    from tracker.ai import understand_message
-    from django.utils import timezone as django_tz
-    from datetime import timedelta
-
     user_text = update.message.text or update.message.caption or ""
     if not user_text.strip():
         fail_text = "I can only understand text messages, questions, and wallet commands. Please send me a text message or use the menu commands."
         await update.message.reply_text(fail_text, parse_mode="")
         return
 
-    # Check for pending action BEFORE doing anything else
+    # Check for pending action (Confirmation gate: yes/no)
     pending = context.user_data.get("pending_action")
     if pending:
         text_stripped = user_text.strip().lower()
@@ -767,41 +763,20 @@ async def cmd_natural_language(update, context):
             action = pending.get("action")
             context.user_data.pop("pending_action", None)
             
-            if "nl_history" not in context.user_data:
-                context.user_data["nl_history"] = []
-            history = context.user_data["nl_history"]
-            history.append({"role": "user", "content": user_text})
-            
             if action == "add_wallet":
                 address = pending.get("address", "")
                 nickname = pending.get("nickname", "")
                 context.args = [address, nickname]
                 await cmd_add_wallet(update, context)
-                history.append({"role": "assistant", "content": f"I have added the wallet named {nickname} with address {address} to the watch list."})
             elif action == "remove_wallet":
                 nickname = pending.get("nickname", "")
                 context.args = [nickname]
                 await cmd_remove_wallet(update, context)
-                history.append({"role": "assistant", "content": f"I have removed the wallet named {nickname} from the watch list."})
-            
-            if len(history) > 10:
-                context.user_data["nl_history"] = history[-10:]
             return
 
         elif text_stripped == "no":
             context.user_data.pop("pending_action", None)
-            
-            if "nl_history" not in context.user_data:
-                context.user_data["nl_history"] = []
-            history = context.user_data["nl_history"]
-            history.append({"role": "user", "content": user_text})
-            
-            reply_text = "Okay, cancelled."
-            await update.message.reply_text(reply_text, parse_mode="")
-            history.append({"role": "assistant", "content": reply_text})
-            
-            if len(history) > 10:
-                context.user_data["nl_history"] = history[-10:]
+            await update.message.reply_text("Okay, cancelled.", parse_mode="")
             return
 
         else:
@@ -818,53 +793,58 @@ async def cmd_natural_language(update, context):
             await update.message.reply_text(msg, parse_mode="")
             return
 
-    # Initialize history list if it doesn't exist
-    if "nl_history" not in context.user_data:
-        context.user_data["nl_history"] = []
+    # Check for pending add address (Multi-step add wallet flow)
+    pending_add_address = context.user_data.get("pending_add_address")
+    if pending_add_address:
+        nickname = user_text.strip()
+        # Verify the nickname is not empty or a Solana address itself
+        if nickname and not SOLANA_ADDRESS_RE.match(nickname):
+            context.user_data.pop("pending_add_address", None)
+            context.user_data["pending_action"] = {
+                "action": "add_wallet",
+                "address": pending_add_address,
+                "nickname": nickname
+            }
+            msg = f"I understood: add the wallet named {nickname} with address {pending_add_address}. Reply yes to confirm, or no to cancel."
+            await update.message.reply_text(msg, parse_mode="")
+            return
+        # If it is a Solana address, treat it as updating the pending address instead
+        elif SOLANA_ADDRESS_RE.match(nickname):
+            context.user_data["pending_add_address"] = nickname
+            await update.message.reply_text(
+                f"Great! I have the address. What nickname would you like to assign to this wallet?",
+                parse_mode=""
+            )
+            return
+
+    # Normalize user input for matching
+    cleaned_text = user_text.strip()
+    lower_text = cleaned_text.lower()
     
-    history = context.user_data["nl_history"]
+    # 1. List Wallets
+    list_patterns = ["list", "lists", "listwallets", "listwallet", "showwallets", "showwallet"]
+    if lower_text in list_patterns or lower_text == "list wallets":
+        await cmd_list_wallets(update, context)
+        return
 
-    # Build context for the AI
-    wallet_names = await sync_to_async(list)(
-        Wallet.objects.values_list("nickname", flat=True)
-    )
-    total_buys = await sync_to_async(TokenBuy.objects.count)()
-    since = django_tz.now() - timedelta(hours=24)
-    alerts_today = await sync_to_async(
-        MatchAlert.objects.filter(sent_at__gte=since).count
-    )()
-
-    await update.message.reply_text("Thinking...")
-
-    result = await sync_to_async(understand_message)(
-        user_text=user_text,
-        history=history,
-        wallet_names=list(wallet_names),
-        total_buys=total_buys,
-        alerts_today=alerts_today,
-    )
-
-    # Append user's input to history
-    history.append({"role": "user", "content": user_text})
-
-    action_type = result.get("type")
-
-    if action_type == "reply":
-        reply_text = result.get("text", "I could not understand that.")
-        await update.message.reply_text(reply_text, parse_mode="")
-        history.append({"role": "assistant", "content": reply_text})
-
-    elif action_type == "action":
-        action = result.get("action", "")
-
-        if action == "list_wallets":
-            await cmd_list_wallets(update, context)
-            history.append({"role": "assistant", "content": "I have listed the tracked wallets."})
-
-        elif action == "add_wallet":
-            address = result.get("address", "")
-            nickname = result.get("nickname", "")
-            if address and nickname:
+    # 2. Add Wallet
+    # Support "add wallet <address> <nickname>", "add <address> <nickname>"
+    # Or just pasting the address.
+    if lower_text.startswith("add") or SOLANA_ADDRESS_RE.search(cleaned_text):
+        # Extract Solana address
+        words = cleaned_text.split()
+        address = None
+        for w in words:
+            if SOLANA_ADDRESS_RE.match(w):
+                address = w
+                break
+        
+        if address:
+            # Reconstruct nickname from remaining words
+            nickname_words = [w for w in words if w != address and w.lower() not in ["add", "wallet"]]
+            nickname = " ".join(nickname_words).strip()
+            
+            if nickname:
                 context.user_data["pending_action"] = {
                     "action": "add_wallet",
                     "address": address,
@@ -872,17 +852,34 @@ async def cmd_natural_language(update, context):
                 }
                 msg = f"I understood: add the wallet named {nickname} with address {address}. Reply yes to confirm, or no to cancel."
                 await update.message.reply_text(msg, parse_mode="")
-                history.append({"role": "assistant", "content": msg})
             else:
-                fail_text = (
-                    "I understood you want to add a wallet but could not extract the address or nickname. "
-                    "Please tell me the Solana address and what nickname you want to give it."
+                context.user_data["pending_add_address"] = address
+                await update.message.reply_text(
+                    f"Great! I have the address. What nickname would you like to assign to this wallet?",
+                    parse_mode=""
                 )
-                await update.message.reply_text(fail_text, parse_mode="")
-                history.append({"role": "assistant", "content": fail_text})
+            return
+        else:
+            # User typed "add" or "add wallet" without address
+            await update.message.reply_text(
+                "Please provide a wallet address and a nickname to track it, like this: add wallet address nickname.",
+                parse_mode=""
+            )
+            return
 
-        elif action == "remove_wallet":
-            nickname = result.get("nickname", "")
+    # 3. Remove Wallet
+    # Support "remove wallet <nickname>", "remove <nickname>", "delete wallet <nickname>", "delete <nickname>"
+    if lower_text in ["remove", "delete", "remove wallet", "delete wallet"]:
+        await update.message.reply_text(
+            "Please specify the nickname or address of the wallet you want to remove, like this: remove wallet nickname.",
+            parse_mode=""
+        )
+        return
+
+    remove_prefixes = ["remove wallet ", "remove ", "delete wallet ", "delete "]
+    for prefix in remove_prefixes:
+        if lower_text.startswith(prefix):
+            nickname = cleaned_text[len(prefix):].strip()
             if nickname:
                 context.user_data["pending_action"] = {
                     "action": "remove_wallet",
@@ -890,36 +887,32 @@ async def cmd_natural_language(update, context):
                 }
                 msg = f"I understood: remove the wallet named {nickname}. Reply yes to confirm, or no to cancel."
                 await update.message.reply_text(msg, parse_mode="")
-                history.append({"role": "assistant", "content": msg})
             else:
-                fail_text = "Which wallet would you like to remove? Please provide its nickname."
-                await update.message.reply_text(fail_text, parse_mode="")
-                history.append({"role": "assistant", "content": fail_text})
+                await update.message.reply_text(
+                    "Please specify the nickname or address of the wallet you want to remove, like this: remove wallet nickname.",
+                    parse_mode=""
+                )
+            return
 
-        elif action == "profile":
-            nickname = result.get("nickname", "")
-            if nickname:
-                context.args = [nickname]
-                await cmd_profile(update, context)
-                history.append({"role": "assistant", "content": f"I have displayed the profile for {nickname}."})
-            else:
-                fail_text = "Which wallet would you like a profile for? Please provide its nickname."
-                await update.message.reply_text(fail_text, parse_mode="")
-                history.append({"role": "assistant", "content": fail_text})
-
+    # 4. Profile
+    # Support "profile <nickname>"
+    if lower_text.startswith("profile "):
+        nickname = cleaned_text[len("profile "):].strip()
+        if nickname:
+            context.args = [nickname]
+            await cmd_profile(update, context)
         else:
-            fail_text = f"I understood your intent but don't know how to do '{action}' yet."
-            await update.message.reply_text(fail_text, parse_mode="")
-            history.append({"role": "assistant", "content": fail_text})
+            await update.message.reply_text(
+                "Which wallet would you like a profile for? Please provide its nickname.",
+                parse_mode=""
+            )
+        return
 
-    else:
-        fail_text = "I did not understand that. Try typing a command or ask me a question."
-        await update.message.reply_text(fail_text, parse_mode="")
-        history.append({"role": "assistant", "content": fail_text})
-
-    # Keep history capped at 10 items to prevent context growth
-    if len(history) > 10:
-        context.user_data["nl_history"] = history[-10:]
+    # Fallback response
+    await update.message.reply_text(
+        "I did not understand that. Try typing a command like /listwallets or /add wallet.",
+        parse_mode=""
+    )
 
 
 
