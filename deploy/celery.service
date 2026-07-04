@@ -1,0 +1,18 @@
+[Unit]
+Description=WalletBot Celery Worker
+After=network.target redis.service
+
+[Service]
+User=deen
+WorkingDirectory=/home/deen/walletbot
+EnvironmentFile=/home/deen/walletbot/.env
+ExecStart=/home/deen/walletbot/.venv/bin/celery \
+    -A walletbot worker \
+    --beat \
+    --loglevel=info \
+    --concurrency=2
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+[Unit]
+Description=WalletBot Django + Gunicorn
+After=network.target postgresql.service
+
+[Service]
+User=deen
+WorkingDirectory=/home/deen/walletbot
+EnvironmentFile=/home/deen/walletbot/.env
+ExecStart=/home/deen/walletbot/.venv/bin/gunicorn \
+    walletbot.wsgi:application \
+    --bind 127.0.0.1:8000 \
+    --workers 2 \
+    --timeout 30
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

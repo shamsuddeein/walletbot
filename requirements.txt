@@ -1,0 +1,11 @@
+django>=4.2,<5.0
+dj-database-url>=2.1
+djangorestframework>=3.14
+celery[redis]>=5.3
+psycopg2-binary>=2.9
+rapidfuzz>=3.6
+imagehash>=4.3
+Pillow>=10.0
+python-telegram-bot>=20.0
+python-decouple>=3.8
+requests>=2.31

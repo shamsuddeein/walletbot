@@ -1,0 +1,14 @@
+[Unit]
+Description=WalletBot Telegram Bot (polling)
+After=network.target
+
+[Service]
+User=deen
+WorkingDirectory=/home/deen/walletbot
+EnvironmentFile=/home/deen/walletbot/.env
+ExecStart=/home/deen/walletbot/.venv/bin/python manage.py run_bot
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
