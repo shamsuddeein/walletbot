@@ -1,0 +1,70 @@
+================================================================================
+SOLANA WALLET-TRACKING TELEGRAM BOT — PROJECT OVERVIEW
+================================================================================
+
+1. WHAT IS THIS PROJECT?
+--------------------------------------------------------------------------------
+This project is an automated, high-speed Solana transaction intelligence tool. 
+It monitors up to 10 Solana wallets in real time. Whenever a monitored wallet 
+makes a swap (buys a token), the system checks that token against all past buys 
+made by the same wallet. 
+
+If the new token resembles a past purchase—by name, symbol, or logo art—the bot 
+sends a similarity alert to a private Telegram channel. If no match is found, 
+the bot stays completely silent so the trader is only notified of repeating 
+patterns.
+
+2. WHAT DID WE ADD IN THIS SESSION? (THE AI TAKEOVER UPGRADE)
+--------------------------------------------------------------------------------
+We added a fail-safe AI layer using OpenRouter (primary model: GPT-OSS 20B; 
+fallback model: Gemma 31B IT) to make the bot behave like a smart analyst:
+
+*   AI Match Explanations: Every match alert includes 2-3 sentences explaining 
+    what the repeating purchase pattern likely means (e.g. V2 relaunch, copycat).
+*   Live Risk Check: Calls DexScreener automatically to grade token age, 
+    liquidity pool depth, and volume, rating the risk (HIGH, MEDIUM, or LOW).
+*   Wallet Strategy Context: Analyzes the wallet's last 15 buys in the database 
+    to outline what the wallet is doing right now.
+*   Conversational Memory: The bot retains the last 8 messages of history. 
+    If you paste just a Solana address, it will ask for a nickname, and when 
+    you reply with "Shamo", it links them together and tracks it.
+*   Wallet Profiles (/profile): Generates a strategy profile for any tracked wallet.
+*   Daily Morning Digests: Automatically compiles and sends a summary of all 
+    buys and alerts from the last 24 hours at 9:00 AM UTC.
+*   Anomaly Alerting: Sounds an alarm if a wallet makes 3+ buys in under 2 hours.
+
+3. PROJECT DIRECTORY STRUCTURE
+--------------------------------------------------------------------------------
+The project contains 3 primary folders:
+
+*   walletbot/ (Core Configuration)
+    - settings.py: Django setup, database URLs, and Celery Beat schedule.
+    - celery.py: Main asynchronous event loop entrypoint.
+    - urls.py: Directs incoming Helius webhook URLs to our database.
+    - wsgi.py: Production server entrypoint.
+
+*   tracker/ (App Logic)
+    - models.py: Stores Wallet watchlists, TokenBuys, and MatchAlert history.
+    - tasks.py: Asynchronous worker tasks (calculates risks, matches, and digests).
+    - telegram_bot.py: Handles command routing, access control, and memory.
+    - matching.py: Runs rapidfuzz text calculations and imagehash hashes.
+    - helius.py: Registers and deletes watched wallets directly on Helius API.
+    - ai.py: Coordinates all LLM queries and falls back gracefully on errors.
+
+*   deploy/ (Production Files)
+    - README.md: VPS setup checklist (Nginx proxy, SSL certificates, systemd).
+    - walletbot.service: systemd service running Gunicorn (Django).
+    - celery.service: systemd service running Celery worker and Beat scheduler.
+    - bot.service: systemd service running the Telegram polling loop.
+
+4. CORE ARCHITECTURE & DATA FLOW
+--------------------------------------------------------------------------------
+1. Transaction: Watched wallet swaps a token.
+2. Webhook: Helius pushes transaction details immediately to our Django server.
+3. Queue Hand-off: Django saves raw payload and triggers an asynchronous Celery 
+   task (returns a 200 OK to Helius instantly so connections are never blocked).
+4. Fetch: Celery retrieves token metadata, retrieves past buys, and hashes the logo.
+5. Similarity Engine: Runs rapidfuzz on text and imagehash on the icon.
+6. AI Enrichment: Fetches DexScreener data, calls OpenRouter, and builds the alert.
+7. Telegram: Delivers the enriched analysis directly to your Telegram chat.
+================================================================================
