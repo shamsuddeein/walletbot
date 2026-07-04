@@ -88,9 +88,22 @@ def compute_logo_hash(url: str) -> Optional[str]:
     """
     if not url:
         return None
+
+    # Pre-check URL to avoid downloading SVG files if possible
+    if url.lower().split("?")[0].endswith(".svg"):
+        logger.debug("SVG logo detected via URL extension; skipping perceptual hash (unsupported by imagehash)")
+        return None
+
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
+
+        # Check Content-Type header
+        content_type = response.headers.get("Content-Type", "")
+        if "svg" in content_type:
+            logger.debug("SVG logo detected via Content-Type header; skipping perceptual hash (unsupported by imagehash)")
+            return None
+
         img = Image.open(io.BytesIO(response.content)).convert("RGBA")
         h = imagehash.phash(img)
         return str(h)

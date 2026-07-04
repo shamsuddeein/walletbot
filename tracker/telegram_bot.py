@@ -223,8 +223,11 @@ def send_alert(alert, ai_explanation: str = "", token_risk: dict | None = None, 
         f"View on Solscan: {solscan_url}"
     )
 
+    if new.amount_spent:
+        text += f"\n\nAmount spent: {new.amount_spent:,.4f} {new.spent_symbol}"
+
     if new.amount:
-        text += f"\n\nAmount spent: {new.amount} SOL"
+        text += f"\nTokens bought: {new.amount:,.2f} {new.symbol or '?'}"
 
     # Risk level
     if token_risk and token_risk.get("level") != "UNKNOWN":
@@ -417,6 +420,9 @@ def db_run_test_scenario(user_id: int, scenario_num: int) -> tuple[str, int | No
             contract_address="PastContractAddress11111111111111111111",
             timestamp=now - timedelta(days=6),
             amount=100.0,
+            amount_spent=1.2,
+            spent_symbol="SOL",
+            tx_signature="mock_sig_past_1",
         )
         new_buy = TokenBuy.objects.create(
             wallet=wallet,
@@ -427,6 +433,9 @@ def db_run_test_scenario(user_id: int, scenario_num: int) -> tuple[str, int | No
             contract_address="NewContractAddress111111111111111111111",
             timestamp=now,
             amount=150.0,
+            amount_spent=1.8,
+            spent_symbol="SOL",
+            tx_signature="mock_sig_new_1",
         )
         msg = "🧪 Scenario 1: Identical name match ('The Black Bull')"
     elif scenario_num == 2:
@@ -440,6 +449,9 @@ def db_run_test_scenario(user_id: int, scenario_num: int) -> tuple[str, int | No
             contract_address="PastContractAddress11111111111111111111",
             timestamp=now - timedelta(days=4),
             amount=50.0,
+            amount_spent=50.0,
+            spent_symbol="USDC",
+            tx_signature="mock_sig_past_2",
         )
         new_buy = TokenBuy.objects.create(
             wallet=wallet,
@@ -450,6 +462,9 @@ def db_run_test_scenario(user_id: int, scenario_num: int) -> tuple[str, int | No
             contract_address="NewContractAddress111111111111111111111",
             timestamp=now,
             amount=75.0,
+            amount_spent=75.0,
+            spent_symbol="USDC",
+            tx_signature="mock_sig_new_2",
         )
         msg = "🧪 Scenario 2: Identical name match ('Dumacrats')"
     else:
@@ -463,6 +478,9 @@ def db_run_test_scenario(user_id: int, scenario_num: int) -> tuple[str, int | No
             contract_address="PastContractAddress11111111111111111111",
             timestamp=now - timedelta(days=3),
             amount=500.0,
+            amount_spent=2.5,
+            spent_symbol="SOL",
+            tx_signature="mock_sig_past_3",
         )
         new_buy = TokenBuy.objects.create(
             wallet=wallet,
@@ -473,6 +491,9 @@ def db_run_test_scenario(user_id: int, scenario_num: int) -> tuple[str, int | No
             contract_address="NewContractAddress111111111111111111111",
             timestamp=now,
             amount=600.0,
+            amount_spent=3.0,
+            spent_symbol="SOL",
+            tx_signature="mock_sig_new_3",
         )
         msg = "🧪 Scenario 3: Near-identical fuzzy match ('The White Whale' vs 'The White Whale V2')"
 
@@ -601,12 +622,23 @@ async def cmd_clear(update, context):
     failed_count = 0
     
     # Attempt to delete recent messages backwards from the current message
+    import asyncio
+    import telegram.error
+
     for msg_id in range(current_id, current_id - 100, -1):
         if msg_id == status_msg.message_id:
             continue
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
             deleted_count += 1
+            await asyncio.sleep(0.05)  # small delay to prevent Telegram rate limit bans
+        except telegram.error.RetryAfter as e:
+            await asyncio.sleep(e.retry_after)
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+                deleted_count += 1
+            except Exception:
+                failed_count += 1
         except Exception:
             failed_count += 1
             
@@ -852,9 +884,18 @@ async def post_init(application):
 
 def build_application():
     """Build and return the python-telegram-bot Application."""
-    from telegram.ext import Application, CommandHandler, MessageHandler, filters
+    from telegram.ext import Application, CommandHandler, MessageHandler, filters, PicklePersistence
 
-    app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
+    persistence_path = os.path.join(settings.BASE_DIR, "bot_persistence.pickle")
+    persistence = PicklePersistence(filepath=persistence_path)
+
+    app = (
+        Application.builder()
+        .token(settings.TELEGRAM_BOT_TOKEN)
+        .persistence(persistence)
+        .post_init(post_init)
+        .build()
+    )
     app.add_error_handler(error_handler)
     app.add_handler(CommandHandler("claim", cmd_claim))
     app.add_handler(CommandHandler("start", cmd_start))

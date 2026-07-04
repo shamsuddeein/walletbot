@@ -48,7 +48,7 @@ def _update_webhook_addresses(addresses: list[str]) -> bool:
     # Helius webhooks require at least 1 watch address even if paused/inactive.
     # If the list is empty, supply our dead placeholder address.
     if not addresses:
-        addresses = ["nwPkEagtaEE36tXW1y7ocozuphko1od75DMY7nPuupuE"]
+        addresses = ["11111111111111111111111111111111"]
 
     url = f"{HELIUS_BASE}/webhooks/{settings.HELIUS_WEBHOOK_ID}?api-key={settings.HELIUS_API_KEY}"
     payload = {

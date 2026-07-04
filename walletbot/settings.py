@@ -76,11 +76,12 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
 
+from celery.schedules import crontab
+
 CELERY_BEAT_SCHEDULE = {
     "daily-digest": {
         "task": "tracker.tasks.daily_digest",
-        "schedule": 86400,  # every 24 hours
-        "options": {"eta": None},  # will fire at next 9:00 UTC after first start
+        "schedule": crontab(hour=9, minute=0),
     },
     "wallet-anomaly-check": {
         "task": "tracker.tasks.wallet_anomaly_check",

@@ -23,7 +23,8 @@ def _parse_buy_from_payload(payload: dict) -> Optional[dict]:
     Extract the fields we need from a Helius enhanced-webhook payload.
 
     Returns a dict with keys:
-        wallet_address, mint, name, symbol, logo_url, amount, timestamp
+        wallet_address, mint, name, symbol, logo_url, amount, timestamp,
+        tx_signature, amount_spent, spent_symbol
     or None if this event isn't a buy we care about.
 
     Helius enhanced SWAP payloads look like:
@@ -39,16 +40,50 @@ def _parse_buy_from_payload(payload: dict) -> Optional[dict]:
       "nativeTransfers": [...],
       ...
     }
-    We treat the wallet as the buyer when its address appears as *toUserAccount*
-    on a token transfer (receiving the token they bought).
+    We match against watched wallets by searching tokenTransfers recipient accounts,
+    ensuring we detect swaps routed through Telegram trading bots (Trojan, BonkBot, Maestro).
     """
     event_type = payload.get("type", "")
     if event_type != "SWAP":
         return None
 
-    wallet_address = payload.get("feePayer", "")
-    if not wallet_address:
+    # Get watched wallets from DB
+    from tracker.models import Wallet
+    watched_addresses = set(Wallet.objects.values_list("address", flat=True))
+    if not watched_addresses:
         return None
+
+    # Find the target token transaction to a watched wallet
+    token_transfers = payload.get("tokenTransfers", [])
+    target_transfer = None
+    buyer_wallet_address = None
+
+    # Exclude base tokens / stablecoins as the bought token
+    IGNORED_MINTS = {
+        "So11111111111111111111111111111111111111112",  # WSOL/SOL
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",  # USDT
+    }
+
+    for transfer in token_transfers:
+        recipient = transfer.get("toUserAccount")
+        if recipient in watched_addresses:
+            mint = transfer.get("mint")
+            if mint in IGNORED_MINTS:
+                continue
+            target_transfer = transfer
+            buyer_wallet_address = recipient
+            break
+
+    if not target_transfer or not buyer_wallet_address:
+        return None
+
+    bought_mint = target_transfer.get("mint")
+    raw_amount = target_transfer.get("tokenAmount")
+    try:
+        amount = Decimal(str(raw_amount)) if raw_amount is not None else None
+    except Exception:
+        amount = None
 
     timestamp_unix = payload.get("timestamp")
     timestamp = (
@@ -57,38 +92,51 @@ def _parse_buy_from_payload(payload: dict) -> Optional[dict]:
         else django_tz.now()
     )
 
-    # Find the token the wallet received (the token they bought)
-    token_transfers = payload.get("tokenTransfers", [])
-    bought_mint = None
-    amount = None
-    for transfer in token_transfers:
-        if transfer.get("toUserAccount") == wallet_address:
-            bought_mint = transfer.get("mint")
-            raw_amount = transfer.get("tokenAmount")
+    # Now find what this buyer spent
+    spent_mint = "So11111111111111111111111111111111111111112"
+    spent_amount = Decimal("0.0")
+    spent_symbol = "SOL"
+
+    # 1. Check nativeTransfers for spent SOL from the buyer's wallet
+    native_transfers = payload.get("nativeTransfers", [])
+    for transfer in native_transfers:
+        if transfer.get("fromUserAccount") == buyer_wallet_address:
+            raw_lamports = transfer.get("amount", 0)
             try:
-                amount = Decimal(str(raw_amount)) if raw_amount is not None else None
+                spent_amount = Decimal(str(raw_lamports)) / Decimal("1000000000")
             except Exception:
-                amount = None
+                spent_amount = Decimal("0.0")
+            spent_symbol = "SOL"
             break
 
-    if not bought_mint:
-        return None
+    # 2. Check tokenTransfers for spent SPL token (e.g. USDC, WSOL) if native SOL spent is 0
+    if spent_amount == Decimal("0.0"):
+        for transfer in token_transfers:
+            if transfer.get("fromUserAccount") == buyer_wallet_address:
+                mint = transfer.get("mint")
+                if mint != bought_mint:
+                    raw_amount = transfer.get("tokenAmount")
+                    try:
+                        spent_amount = Decimal(str(raw_amount)) if raw_amount is not None else Decimal("0.0")
+                    except Exception:
+                        spent_amount = Decimal("0.0")
+                    spent_mint = mint
+                    spent_symbol = transfer.get("tokenSymbol", "TOKEN")
+                    break
 
-    # Token metadata may already be in the payload (enhanced webhooks include it)
-    token_meta = {}
-    for tm in payload.get("tokenTransfers", []):
-        if tm.get("mint") == bought_mint:
-            token_meta = tm
-            break
+    tx_signature = payload.get("signature", "")
 
     return {
-        "wallet_address": wallet_address,
+        "wallet_address": buyer_wallet_address,
         "mint": bought_mint,
-        "name": token_meta.get("tokenName", ""),
-        "symbol": token_meta.get("tokenSymbol", ""),
-        "logo_url": token_meta.get("tokenIcon", ""),
+        "name": target_transfer.get("tokenName", ""),
+        "symbol": target_transfer.get("tokenSymbol", ""),
+        "logo_url": target_transfer.get("tokenIcon", ""),
         "amount": amount,
         "timestamp": timestamp,
+        "tx_signature": tx_signature,
+        "amount_spent": spent_amount,
+        "spent_symbol": spent_symbol,
     }
 
 
@@ -100,11 +148,12 @@ def process_buy_event(self, payload: dict):
     Steps:
       1. Parse the payload — bail if it's not a buy we care about.
       2. Confirm the wallet is one we're watching.
-      3. Fetch missing token metadata from Helius if needed.
-      4. Compute the logo perceptual hash.
-      5. Save the TokenBuy to the database.
-      6. Run all three match checks against this wallet's past buys.
-      7. For each match: save a MatchAlert and send a Telegram alert.
+      3. Check for transaction idempotency to avoid duplicates.
+      4. Fetch missing token metadata from Helius if needed.
+      5. Compute the logo perceptual hash.
+      6. Save the TokenBuy to the database.
+      7. Run all three match checks against this wallet's past buys.
+      8. For each match: save a MatchAlert and send a Telegram alert.
     """
     from django.conf import settings
     from tracker.models import Wallet, TokenBuy, MatchAlert
@@ -126,6 +175,13 @@ def process_buy_event(self, payload: dict):
             logger.debug("Wallet %s not in watch list — skipping.", buy_data["wallet_address"])
             return
 
+        # Check if transaction has already been processed to ensure idempotency
+        tx_sig = buy_data.get("tx_signature")
+        if tx_sig:
+            if TokenBuy.objects.filter(tx_signature=tx_sig).exists():
+                logger.info("Transaction %s already processed — skipping.", tx_sig)
+                return
+
         # Fetch missing metadata from Helius if the payload didn't include it
         if not buy_data["name"] or not buy_data["symbol"]:
             meta = helius_api.get_token_metadata(buy_data["mint"])
@@ -146,6 +202,9 @@ def process_buy_event(self, payload: dict):
             contract_address=buy_data["mint"],
             amount=buy_data["amount"],
             timestamp=buy_data["timestamp"],
+            tx_signature=tx_sig,
+            amount_spent=buy_data["amount_spent"],
+            spent_symbol=buy_data["spent_symbol"],
             raw_payload=payload,
         )
 
@@ -313,6 +372,11 @@ def wallet_anomaly_check():
     chat_id = _get_allowed_user_id()
 
     for wallet in wallets:
+        # Prevent duplicate alert spam by enforcing a 2-hour cooldown
+        if wallet.last_anomaly_alert_sent and wallet.last_anomaly_alert_sent >= since:
+            logger.info("Anomaly check: wallet %s already alerted recently — skipping.", wallet.nickname)
+            continue
+
         recent_count = TokenBuy.objects.filter(wallet=wallet, timestamp__gte=since).count()
         if recent_count >= 3:
             _send_message(
@@ -320,4 +384,7 @@ def wallet_anomaly_check():
                 f"Unusual activity: {wallet.nickname} has made {recent_count} buys in the last 2 hours.\n"
                 f"This is higher than normal. Could be a coordinated move — worth watching closely."
             )
+            # Update last anomaly alert sent timestamp
+            wallet.last_anomaly_alert_sent = django_tz.now()
+            wallet.save(update_fields=["last_anomaly_alert_sent"])
             logger.info("Anomaly alert sent for wallet %s (%d buys in 2h)", wallet.nickname, recent_count)
