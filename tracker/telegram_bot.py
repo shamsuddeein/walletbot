@@ -759,6 +759,65 @@ async def cmd_natural_language(update, context):
         await update.message.reply_text(fail_text, parse_mode="")
         return
 
+    # Check for pending action BEFORE doing anything else
+    pending = context.user_data.get("pending_action")
+    if pending:
+        text_stripped = user_text.strip().lower()
+        if text_stripped == "yes":
+            action = pending.get("action")
+            context.user_data.pop("pending_action", None)
+            
+            if "nl_history" not in context.user_data:
+                context.user_data["nl_history"] = []
+            history = context.user_data["nl_history"]
+            history.append({"role": "user", "content": user_text})
+            
+            if action == "add_wallet":
+                address = pending.get("address", "")
+                nickname = pending.get("nickname", "")
+                context.args = [address, nickname]
+                await cmd_add_wallet(update, context)
+                history.append({"role": "assistant", "content": f"I have added the wallet named {nickname} with address {address} to the watch list."})
+            elif action == "remove_wallet":
+                nickname = pending.get("nickname", "")
+                context.args = [nickname]
+                await cmd_remove_wallet(update, context)
+                history.append({"role": "assistant", "content": f"I have removed the wallet named {nickname} from the watch list."})
+            
+            if len(history) > 10:
+                context.user_data["nl_history"] = history[-10:]
+            return
+
+        elif text_stripped == "no":
+            context.user_data.pop("pending_action", None)
+            
+            if "nl_history" not in context.user_data:
+                context.user_data["nl_history"] = []
+            history = context.user_data["nl_history"]
+            history.append({"role": "user", "content": user_text})
+            
+            reply_text = "Okay, cancelled."
+            await update.message.reply_text(reply_text, parse_mode="")
+            history.append({"role": "assistant", "content": reply_text})
+            
+            if len(history) > 10:
+                context.user_data["nl_history"] = history[-10:]
+            return
+
+        else:
+            action = pending.get("action")
+            if action == "add_wallet":
+                nickname = pending.get("nickname", "")
+                address = pending.get("address", "")
+                msg = f"I understood: add the wallet named {nickname} with address {address}. Reply yes to confirm, or no to cancel."
+            elif action == "remove_wallet":
+                nickname = pending.get("nickname", "")
+                msg = f"I understood: remove the wallet named {nickname}. Reply yes to confirm, or no to cancel."
+            else:
+                msg = "Please confirm or cancel the pending action first. Reply yes to confirm, or no to cancel."
+            await update.message.reply_text(msg, parse_mode="")
+            return
+
     # Initialize history list if it doesn't exist
     if "nl_history" not in context.user_data:
         context.user_data["nl_history"] = []
@@ -806,9 +865,14 @@ async def cmd_natural_language(update, context):
             address = result.get("address", "")
             nickname = result.get("nickname", "")
             if address and nickname:
-                context.args = [address, nickname]
-                await cmd_add_wallet(update, context)
-                history.append({"role": "assistant", "content": f"I have added the wallet named {nickname} with address {address} to the watch list."})
+                context.user_data["pending_action"] = {
+                    "action": "add_wallet",
+                    "address": address,
+                    "nickname": nickname
+                }
+                msg = f"I understood: add the wallet named {nickname} with address {address}. Reply yes to confirm, or no to cancel."
+                await update.message.reply_text(msg, parse_mode="")
+                history.append({"role": "assistant", "content": msg})
             else:
                 fail_text = (
                     "I understood you want to add a wallet but could not extract the address or nickname. "
@@ -820,9 +884,13 @@ async def cmd_natural_language(update, context):
         elif action == "remove_wallet":
             nickname = result.get("nickname", "")
             if nickname:
-                context.args = [nickname]
-                await cmd_remove_wallet(update, context)
-                history.append({"role": "assistant", "content": f"I have removed the wallet named {nickname} from the watch list."})
+                context.user_data["pending_action"] = {
+                    "action": "remove_wallet",
+                    "nickname": nickname
+                }
+                msg = f"I understood: remove the wallet named {nickname}. Reply yes to confirm, or no to cancel."
+                await update.message.reply_text(msg, parse_mode="")
+                history.append({"role": "assistant", "content": msg})
             else:
                 fail_text = "Which wallet would you like to remove? Please provide its nickname."
                 await update.message.reply_text(fail_text, parse_mode="")
