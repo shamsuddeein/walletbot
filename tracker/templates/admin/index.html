@@ -1,0 +1,17 @@
+{% extends "admin/index.html" %}
+
+{% block sidebar %}
+<div id="content-related" style="margin-bottom: 20px;">
+    <div class="module">
+        <h2 style="background: var(--primary, #79aec8); color: var(--header-link-color, #fff); padding: 8px 12px; margin: 0; font-size: 13px; font-weight: bold; border-radius: 4px 4px 0 0;">Analytics Tools</h2>
+        <ul style="padding: 15px; margin: 0; list-style: none; background: var(--body-bg, #fff); border: 1px solid var(--border-color, #e0e0e0); border-top: none; border-radius: 0 0 4px 4px;">
+            <li>
+                <a href="{% url 'admin_analytics' %}" style="font-weight: bold; color: var(--primary, #79aec8); font-size: 13px; text-decoration: none; display: flex; align-items: center; gap: 8px;">
+                    📊 View Analytics Dashboard
+                </a>
+            </li>
+        </ul>
+    </div>
+</div>
+{{ block.super }}
+{% endblock %}
