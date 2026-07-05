@@ -337,7 +337,11 @@ async def handle_callback_query(update, context):
 
     # Route update.message to the callback query's message so decorators/handlers work
     if update.message is None and query.message is not None:
+        if hasattr(update, "_unfreeze"):
+            update._unfreeze()
         update.message = query.message
+        if hasattr(update, "_freeze"):
+            update._freeze()
 
     data = query.data
     user_id = update.effective_user.id
