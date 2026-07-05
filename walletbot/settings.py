@@ -20,6 +20,7 @@ CSRF_TRUSTED_ORIGINS = [
 
 # ── Apps ──────────────────────────────────────────────────────
 INSTALLED_APPS = [
+    "tracker",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -27,7 +28,6 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
-    "tracker",
 ]
 
 MIDDLEWARE = [

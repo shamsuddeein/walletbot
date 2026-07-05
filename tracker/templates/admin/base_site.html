@@ -1,5 +1,10 @@
 {% extends "admin/base.html" %}
 
+{% block extrastyle %}
+{{ block.super }}
+<link rel="stylesheet" href="/static/admin/css/custom_admin.css">
+{% endblock %}
+
 {% block branding %}
 <h1 id="site-name" style="display: inline-flex; align-items: center; gap: 15px; width: 100%;">
   <a href="{% url 'admin:index' %}">Django administration</a>
