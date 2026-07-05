@@ -1,5 +1,16 @@
 from django.contrib import admin
+from django.contrib.admin.forms import AdminAuthenticationForm
+from django import forms
 from .models import Wallet, TokenBuy, MatchAlert
+
+class EmailAdminAuthenticationForm(AdminAuthenticationForm):
+    username = forms.EmailField(
+        label="Email",
+        widget=forms.EmailInput(attrs={"autofocus": True}),
+        max_length=254
+    )
+
+admin.site.login_form = EmailAdminAuthenticationForm
 
 
 @admin.register(Wallet)

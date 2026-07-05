@@ -112,3 +112,9 @@ MAX_WALLETS = 10
 # Backfill settings
 BACKFILL_DAYS = config("BACKFILL_DAYS", default=30, cast=int)
 BACKFILL_MAX_TRANSACTIONS = config("BACKFILL_MAX_TRANSACTIONS", default=200, cast=int)
+
+# Authentication Backends
+AUTHENTICATION_BACKENDS = [
+    "tracker.backends.EmailOrUsernameBackend",
+    "django.contrib.auth.backends.ModelBackend",
+]
