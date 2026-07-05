@@ -97,7 +97,8 @@ def get_ai_explanation(
 
 def get_token_risk(name: str, symbol: str, contract_address: str) -> dict:
     """
-    Fetch live DexScreener data for a token and ask the AI to score its risk.
+    Fetch live DexScreener data for a token and score its risk.
+    Uses rules-based logic by default, falling back to AI if configured.
 
     Returns a dict:
         {
@@ -106,6 +107,14 @@ def get_token_risk(name: str, symbol: str, contract_address: str) -> dict:
             "dex_data": {...raw DexScreener summary...}
         }
     """
+    from django.core.cache import cache
+    
+    cache_key = f"token_risk_{contract_address}"
+    cached_result = cache.get(cache_key)
+    if cached_result:
+        logger.info("Found cached token risk for %s", contract_address)
+        return cached_result
+
     # Fetch DexScreener data
     dex_summary = {}
     try:
@@ -132,39 +141,54 @@ def get_token_risk(name: str, symbol: str, contract_address: str) -> dict:
     liq = dex_summary.get("liquidity_usd", 0)
     vol = dex_summary.get("volume_24h", 0)
 
-    prompt = (
-        f"You are a crypto risk analyst. Rate the risk of this token for a trader:\n\n"
-        f"Token: {name} ({symbol})\n"
-        f"Age: {age:.1f} hours\n"
-        f"Liquidity: ${liq:,.0f}\n"
-        f"24h volume: ${vol:,.0f}\n"
-        f"24h price change: {dex_summary.get('price_change_24h', 0):.1f}%\n"
-        f"Market cap: ${dex_summary.get('market_cap', 0):,.0f}\n"
-        f"DEX: {dex_summary.get('dex', 'unknown')}\n\n"
-        f"Reply with EXACTLY this format:\n"
-        f"LEVEL: HIGH or MEDIUM or LOW\n"
-        f"REASON: one sentence explanation"
-    )
+    # Rules-based deterministic risk assessment (instant & free)
+    if liq < 5000:
+        level = "HIGH"
+        reason = f"Extremely low liquidity (${liq:,.0f}). High risk of dump or inability to sell."
+    elif age < 1:
+        level = "HIGH"
+        reason = f"Token is less than 1 hour old ({age:.1f}h). High risk of sudden rug pull."
+    elif liq > 50000 and age > 24:
+        level = "LOW"
+        reason = f"Healthy liquidity (${liq:,.0f}) and has been active for over 24 hours."
+    else:
+        level = "MEDIUM"
+        reason = f"Moderate liquidity (${liq:,.0f}) and age ({age:.1f} hours)."
 
-    ai_response = _call_ai(prompt)
-    level = "UNKNOWN"
-    reason = ""
+    # Only call AI if OpenRouter key is set
+    api_key = getattr(settings, "OPENROUTER_API_KEY", "")
+    if api_key:
+        prompt = (
+            f"You are a crypto risk analyst. Rate the risk of this token for a trader:\n\n"
+            f"Token: {name} ({symbol})\n"
+            f"Age: {age:.1f} hours\n"
+            f"Liquidity: ${liq:,.0f}\n"
+            f"24h volume: ${vol:,.0f}\n"
+            f"24h price change: {dex_summary.get('price_change_24h', 0):.1f}%\n"
+            f"Market cap: ${dex_summary.get('market_cap', 0):,.0f}\n"
+            f"DEX: {dex_summary.get('dex', 'unknown')}\n\n"
+            f"Reply with EXACTLY this format:\n"
+            f"LEVEL: HIGH or MEDIUM or LOW\n"
+            f"REASON: one sentence explanation"
+        )
+        ai_response = _call_ai(prompt)
+        if ai_response:
+            for line in ai_response.splitlines():
+                line = line.strip()
+                if line.upper().startswith("LEVEL:"):
+                    raw = line.split(":", 1)[1].strip().upper()
+                    if "HIGH" in raw:
+                        level = "HIGH"
+                    elif "LOW" in raw:
+                        level = "LOW"
+                    elif "MEDIUM" in raw:
+                        level = "MEDIUM"
+                elif line.upper().startswith("REASON:"):
+                    reason = line.split(":", 1)[1].strip()
 
-    if ai_response:
-        for line in ai_response.splitlines():
-            line = line.strip()
-            if line.upper().startswith("LEVEL:"):
-                raw = line.split(":", 1)[1].strip().upper()
-                if "HIGH" in raw:
-                    level = "HIGH"
-                elif "LOW" in raw:
-                    level = "LOW"
-                elif "MEDIUM" in raw:
-                    level = "MEDIUM"
-            elif line.upper().startswith("REASON:"):
-                reason = line.split(":", 1)[1].strip()
-
-    return {"level": level, "reason": reason, "dex_data": dex_summary}
+    result = {"level": level, "reason": reason, "dex_data": dex_summary}
+    cache.set(cache_key, result, 600)  # cache for 10 mins
+    return result
 
 
 def get_wallet_context(wallet_nickname: str, recent_buys: list[dict]) -> str:

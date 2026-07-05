@@ -157,3 +157,37 @@ class BotConfirmationTests(IsolatedAsyncioTestCase):
             "I understood: add the wallet named sol2 with address 6oQadxW73dSQ2TQ429LcSauAxEEpsQfW3saT598m9PrY. Reply yes to confirm, or no to cancel.",
             parse_mode=""
         )
+
+    @patch("tracker.telegram_bot.cmd_profile", new_callable=AsyncMock)
+    async def test_callback_profile_triggers_command(self, mock_cmd_profile):
+        from tracker.telegram_bot import handle_callback_query
+        
+        callback_query = AsyncMock()
+        callback_query.data = "profile_sol2"
+        self.update.callback_query = callback_query
+        
+        await handle_callback_query(self.update, self.context)
+        
+        callback_query.answer.assert_called_once()
+        mock_cmd_profile.assert_called_once_with(self.update, self.context)
+        self.assertEqual(self.context.args, ["sol2"])
+
+    async def test_callback_remove_sets_pending_action(self):
+        from tracker.telegram_bot import handle_callback_query
+        
+        callback_query = AsyncMock()
+        callback_query.data = "remove_sol2"
+        callback_query.message = AsyncMock()
+        self.update.callback_query = callback_query
+        
+        await handle_callback_query(self.update, self.context)
+        
+        callback_query.answer.assert_called_once()
+        self.assertEqual(
+            self.context.user_data.get("pending_action"),
+            {"action": "remove_wallet", "nickname": "sol2"}
+        )
+        callback_query.message.reply_text.assert_called_once_with(
+            "⚠️ You clicked Stop Tracking. Do you want to remove the wallet named sol2? Reply yes to confirm, or no to cancel.",
+            parse_mode=""
+        )

@@ -42,12 +42,15 @@ def _make_aware(dt):
     return dt
 
 
-def _send_message(chat_id: int | str, text: str, parse_mode: str = "HTML") -> bool:
+def _send_message(chat_id: int | str, text: str, parse_mode: str = "HTML", reply_markup: dict | None = None) -> bool:
     """Send a message via the Telegram Bot API HTTP endpoint."""
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     try:
         r = requests.post(
             f"{TELEGRAM_API_BASE}/sendMessage",
-            json={"chat_id": chat_id, "text": text, "parse_mode": parse_mode},
+            json=payload,
             timeout=10,
         )
         r.raise_for_status()
@@ -188,8 +191,8 @@ def send_alert(alert, ai_explanation: str = "", token_risk: dict | None = None, 
     # Format localized timestamps
     local_new = django_tz.localtime(_make_aware(new.timestamp))
     local_past = django_tz.localtime(_make_aware(past.timestamp))
-    new_time = local_new.strftime("%B %d, %Y, %I:%M %p")
-    past_time = local_past.strftime("%B %d, %Y, %I:%M %p")
+    new_time = local_new.strftime("%b %d, %Y at %I:%M %p")
+    past_time = local_past.strftime("%b %d, %Y at %I:%M %p")
 
     # Calculate difference
     time_diff = format_time_diff(new.timestamp, past.timestamp)
@@ -209,44 +212,58 @@ def send_alert(alert, ai_explanation: str = "", token_risk: dict | None = None, 
     dex_url = f"https://dexscreener.com/solana/{new.contract_address}"
     solscan_url = f"https://solscan.io/token/{new.contract_address}"
 
-    # Build the message
+    # Format risk level with color-coded emoji
+    risk_text = ""
+    if token_risk and token_risk.get("level") != "UNKNOWN":
+        level = token_risk["level"]
+        risk_emoji = "🔴" if level == "HIGH" else ("🟡" if level == "MEDIUM" else "🟢")
+        reason = token_risk.get("reason", "")
+        risk_text = f"\n\n⚡️ <b>Risk Level:</b> {risk_emoji} <b>{level}</b>"
+        if reason:
+            risk_text += f"\n└ <i>{reason}</i>"
+
+    # Build rich HTML message
     text = (
-        f"The wallet named {wallet.nickname} just bought a token similar to one it bought before.\n\n"
-        f"New token: {new.name or '?'} ({new.symbol or '?'})\n"
-        f"Bought: {new_time}\n\n"
-        f"Matched with: {past.name or '?'} ({past.symbol or '?'})\n"
-        f"Bought: {past_time}\n\n"
-        f"Time between buys: {time_diff}\n\n"
-        f"Match reason: {match_reason}\n\n"
-        f"Contract address: {new.contract_address}\n"
-        f"View on DexScreener: {dex_url}\n"
-        f"View on Solscan: {solscan_url}"
+        f"🚨 <b>Similarity Alert for {wallet.nickname}</b>\n\n"
+        f"🆕 <b>New Buy:</b> <b>{new.name or '?'}</b> ({new.symbol or '?'})\n"
+        f"⏰ <b>Bought:</b> {new_time}\n"
+        f"💳 <b>Spent:</b> <code>{new.amount_spent:,.4f}</code> {new.spent_symbol} "
+    )
+    if new.amount:
+        text += f"(obtained <code>{new.amount:,.2f}</code> {new.symbol or '?'})"
+    
+    text += (
+        f"\n\n"
+        f"🔄 <b>Matched Buy:</b> <b>{past.name or '?'}</b> ({past.symbol or '?'})\n"
+        f"⏰ <b>Bought:</b> {past_time}\n"
+        f"⏳ <b>Time Between:</b> {time_diff}\n"
+        f"🎯 <b>Match Reason:</b> {match_reason}\n\n"
+        f"🔑 <b>Contract:</b> <code>{new.contract_address}</code>"
+        f"{risk_text}"
     )
 
-    if new.amount_spent:
-        text += f"\n\nAmount spent: {new.amount_spent:,.4f} {new.spent_symbol}"
-
-    if new.amount:
-        text += f"\nTokens bought: {new.amount:,.2f} {new.symbol or '?'}"
-
-    # Risk level
-    if token_risk and token_risk.get("level") != "UNKNOWN":
-        risk_label = token_risk["level"]
-        risk_reason = token_risk.get("reason", "")
-        text += f"\n\nRisk: {risk_label}"
-        if risk_reason:
-            text += f" — {risk_reason}"
-
-    # Wallet context
     if wallet_context:
-        text += f"\n\nWallet pattern: {wallet_context}"
+        text += f"\n\n👤 <b>Wallet Pattern:</b>\n{wallet_context}"
 
-    # AI explanation
     if ai_explanation:
-        text += f"\n\nAnalysis: {ai_explanation}"
+        text += f"\n\n🧠 <b>AI Analysis:</b>\n{ai_explanation}"
+
+    # Construct Inline Keyboard buttons
+    reply_markup = {
+        "inline_keyboard": [
+            [
+                {"text": "📈 DexScreener", "url": dex_url},
+                {"text": "🔍 Solscan", "url": solscan_url},
+            ],
+            [
+                {"text": "👤 Wallet Profile", "callback_data": f"profile_{wallet.nickname}"},
+                {"text": "❌ Stop Tracking", "callback_data": f"remove_{wallet.nickname}"},
+            ]
+        ]
+    }
 
     chat_id = _get_allowed_user_id()
-    return _send_message(chat_id, text, parse_mode="")
+    return _send_message(chat_id, text, parse_mode="HTML", reply_markup=reply_markup)
 
 
 # ── Command handlers ──────────────────────────────────────────────────────────
@@ -282,10 +299,80 @@ async def cmd_claim(update, context):
 
 @owner_only
 async def cmd_start(update, context):
-    await update.message.reply_text(
-        "Hello. The wallet tracker is running and ready. You can add a wallet to watch by using add wallet followed by the address and a nickname. To stop watching one, use remove wallet followed by the nickname or address. You can also view all watched wallets by using list wallets.",
-        parse_mode="",
+    welcome_text = (
+        "🤖 <b>Solana Wallet-Tracking Bot</b>\n\n"
+        "Hello! I am active and monitoring the Solana blockchain. I will notify you "
+        "instantly whenever your monitored wallets buy repeating tokens.\n\n"
+        "📝 <b>Quick Commands:</b>\n"
+        "• <b>Add wallet:</b> <code>add [address] [nickname]</code>\n"
+        "• <b>Remove wallet:</b> <code>remove [nickname/address]</code>\n"
+        "• <b>List wallets:</b> <code>/list</code>\n"
+        "• <b>Wallet Profile:</b> <code>/profile [nickname]</code>\n"
+        "• <b>Clear screen:</b> <code>/clear</code>\n\n"
+        "Use the menu button or click the options below to get started!"
     )
+    
+    reply_markup = {
+        "inline_keyboard": [
+            [
+                {"text": "📋 List Monitored Wallets", "callback_data": "list_wallets_cmd"},
+            ],
+            [
+                {"text": "➕ Add Wallet Help", "callback_data": "add_wallet_help"},
+            ]
+        ]
+    }
+    
+    await update.message.reply_text(
+        welcome_text,
+        parse_mode="HTML",
+        reply_markup=reply_markup
+    )
+
+
+async def handle_callback_query(update, context):
+    """Handle click events on inline keyboard buttons."""
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    user_id = update.effective_user.id
+    allowed = _get_allowed_user_id()
+
+    # Enforce access control on callback queries
+    if allowed != 0 and user_id != allowed:
+        await query.message.reply_text(
+            "You are not authorized to use this bot.",
+            parse_mode=""
+        )
+        return
+
+    if data.startswith("profile_"):
+        nickname = data.split("_", 1)[1]
+        context.args = [nickname]
+        await cmd_profile(update, context)
+        
+    elif data.startswith("remove_"):
+        nickname = data.split("_", 1)[1]
+        context.user_data["pending_action"] = {
+            "action": "remove_wallet",
+            "nickname": nickname
+        }
+        await query.message.reply_text(
+            f"⚠️ You clicked Stop Tracking. Do you want to remove the wallet named {nickname}? Reply yes to confirm, or no to cancel.",
+            parse_mode=""
+        )
+        
+    elif data == "list_wallets_cmd":
+        await cmd_list_wallets(update, context)
+        
+    elif data == "add_wallet_help":
+        await query.message.reply_text(
+            "💡 <b>To track a new wallet:</b>\n"
+            "Simply send the Solana address and a nickname. For example:\n"
+            "<code>add 6oQadxW73dSQ2TQ429LcSauAxEEpsQfW3saT598m9PrY trader_shamo</code>",
+            parse_mode="HTML"
+        )
 
 
 @owner_only
@@ -724,21 +811,36 @@ async def cmd_profile(update, context):
         alert_count=alert_count,
     )
 
+    total_buys = len(buys)
     if not profile:
+        profile_text = (
+            f"📊 <b>Wallet Activity Report</b>\n"
+            f"• <b>Monitored since:</b> {wallet.date_added.strftime('%B %d, %Y')}\n"
+            f"• <b>Total swaps recorded:</b> <code>{total_buys}</code>\n"
+            f"• <b>Total similarity alerts:</b> <code>{alert_count}</code>\n\n"
+            f"📝 <b>Recent Purchases:</b>\n"
+        )
+        if buy_history:
+            for b in buy_history[:5]:
+                profile_text += f"• {b['name']} ({b['symbol']}) — {b['timestamp_str']}\n"
+        else:
+            profile_text += "• No buys recorded yet."
+            
         await update.message.reply_text(
-            f"Could not generate a profile for {wallet.nickname} right now. Try again shortly.",
-            parse_mode=""
+            f"👤 <b>Profile:</b> {wallet.nickname}\n"
+            f"🔑 <b>Address:</b> <code>{wallet.address}</code>\n\n"
+            f"{profile_text}",
+            parse_mode="HTML"
         )
         return
 
-    total_buys = len(buys)
     await update.message.reply_text(
-        f"Profile: {wallet.nickname}\n"
-        f"Address: {wallet.address[:12]}...\n"
-        f"Total buys recorded: {total_buys}\n"
-        f"Total alerts triggered: {alert_count}\n\n"
+        f"👤 <b>Profile:</b> {wallet.nickname}\n"
+        f"🔑 <b>Address:</b> <code>{wallet.address}</code>\n"
+        f"• <b>Total buys recorded:</b> <code>{total_buys}</code>\n"
+        f"• <b>Total alerts triggered:</b> <code>{alert_count}</code>\n\n"
         f"{profile}",
-        parse_mode=""
+        parse_mode="HTML"
     )
 
 
@@ -935,21 +1037,20 @@ async def post_init(application):
         BotCommand("add", "Track a new Solana wallet"),
         BotCommand("remove", "Stop tracking a wallet"),
         BotCommand("list", "Display monitored wallets and statuses"),
-        BotCommand("profile", "Generate AI personality & strategy profile"),
-        BotCommand("clear", "Clear the conversation history from chat"),
-        BotCommand("test", "Simulate a buy alert & AI analysis")
+        BotCommand("profile", "View monitored wallet profile & history"),
+        BotCommand("clear", "Clear the conversation history from chat")
     ])
     await application.bot.set_my_commands(commands)
     logger.info("Bot commands registered with Telegram.")
-
-
+ 
+ 
 def build_application():
     """Build and return the python-telegram-bot Application."""
-    from telegram.ext import Application, CommandHandler, MessageHandler, filters, PicklePersistence
-
+    from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, PicklePersistence
+ 
     persistence_path = os.path.join(settings.BASE_DIR, "bot_persistence.pickle")
     persistence = PicklePersistence(filepath=persistence_path)
-
+ 
     app = (
         Application.builder()
         .token(settings.TELEGRAM_BOT_TOKEN)
@@ -961,8 +1062,8 @@ def build_application():
     app.add_handler(CommandHandler("claim", cmd_claim))
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("clear", cmd_clear))
-    app.add_handler(CommandHandler("test", cmd_test))
     app.add_handler(CommandHandler("profile", cmd_profile))
+    app.add_handler(CallbackQueryHandler(handle_callback_query))
 
     # Register handlers for both specific and generic commands
     app.add_handler(CommandHandler("addwallet", cmd_add_wallet))

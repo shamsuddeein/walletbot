@@ -218,19 +218,21 @@ def process_buy_event(self, payload: dict):
             contract_address=new_buy.contract_address,
         )
 
-        # Build wallet context from recent history
-        recent_buys_data = [
-            {
-                "name": b.name or "?",
-                "symbol": b.symbol or "?",
-                "timestamp_str": b.timestamp.strftime("%b %d"),
-            }
-            for b in past_buys.order_by("-timestamp")[:15]
-        ]
-        wallet_context = get_wallet_context(
-            wallet_nickname=wallet.nickname,
-            recent_buys=recent_buys_data,
-        )
+        wallet_context = ""
+        # Build wallet context from recent history (only if AI is enabled)
+        if settings.OPENROUTER_API_KEY:
+            recent_buys_data = [
+                {
+                    "name": b.name or "?",
+                    "symbol": b.symbol or "?",
+                    "timestamp_str": b.timestamp.strftime("%b %d"),
+                }
+                for b in past_buys.order_by("-timestamp")[:15]
+            ]
+            wallet_context = get_wallet_context(
+                wallet_nickname=wallet.nickname,
+                recent_buys=recent_buys_data,
+            )
 
         # Run matching
         matches = run_all_checks(new_buy, past_buys)
@@ -264,15 +266,17 @@ def process_buy_event(self, payload: dict):
                     match_parts.append("similar logo")
             match_reason = " and ".join(match_parts) if match_parts else match_result.match_type
 
-            ai_explanation = get_ai_explanation(
-                new_name=new_buy.name or "Unknown",
-                new_symbol=new_buy.symbol or "?",
-                past_name=matched_buy.name or "Unknown",
-                past_symbol=matched_buy.symbol or "?",
-                time_diff=time_diff,
-                match_reason=match_reason,
-                wallet_nickname=wallet.nickname,
-            )
+            ai_explanation = ""
+            if settings.OPENROUTER_API_KEY:
+                ai_explanation = get_ai_explanation(
+                    new_name=new_buy.name or "Unknown",
+                    new_symbol=new_buy.symbol or "?",
+                    past_name=matched_buy.name or "Unknown",
+                    past_symbol=matched_buy.symbol or "?",
+                    time_diff=time_diff,
+                    match_reason=match_reason,
+                    wallet_nickname=wallet.nickname,
+                )
 
             send_alert(
                 alert,
