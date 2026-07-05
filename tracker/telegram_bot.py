@@ -426,6 +426,10 @@ async def cmd_add_wallet(update, context):
         parse_mode="",
     )
 
+    # Trigger Celery backfill task asynchronously (runs in background to not block Telegram)
+    from tracker.tasks import backfill_wallet_history_task
+    backfill_wallet_history_task.delay(address, nickname, update.effective_user.id)
+
 
 @owner_only
 async def cmd_remove_wallet(update, context):

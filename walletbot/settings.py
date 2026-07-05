@@ -107,3 +107,7 @@ SYMBOL_MATCH_THRESHOLD = config("SYMBOL_MATCH_THRESHOLD", default=80, cast=int)
 LOGO_MATCH_THRESHOLD = config("LOGO_MATCH_THRESHOLD", default=10, cast=int)  # imagehash distance ≤ this
 
 MAX_WALLETS = 10
+
+# Backfill settings
+BACKFILL_DAYS = config("BACKFILL_DAYS", default=30, cast=int)
+BACKFILL_MAX_TRANSACTIONS = config("BACKFILL_MAX_TRANSACTIONS", default=200, cast=int)

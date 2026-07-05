@@ -18,7 +18,7 @@ from django.utils import timezone as django_tz
 logger = logging.getLogger(__name__)
 
 
-def _parse_buy_from_payload(payload: dict) -> Optional[dict]:
+def _parse_buy_from_payload(payload: dict, watched_addresses: set[str] | None = None) -> Optional[dict]:
     """
     Extract the fields we need from a Helius enhanced-webhook payload.
 
@@ -48,8 +48,9 @@ def _parse_buy_from_payload(payload: dict) -> Optional[dict]:
         return None
 
     # Get watched wallets from DB
-    from tracker.models import Wallet
-    watched_addresses = set(Wallet.objects.values_list("address", flat=True))
+    if watched_addresses is None:
+        from tracker.models import Wallet
+        watched_addresses = set(Wallet.objects.values_list("address", flat=True))
     if not watched_addresses:
         return None
 
@@ -86,11 +87,14 @@ def _parse_buy_from_payload(payload: dict) -> Optional[dict]:
         amount = None
 
     timestamp_unix = payload.get("timestamp")
-    timestamp = (
-        datetime.fromtimestamp(timestamp_unix, tz=timezone.utc)
-        if timestamp_unix
-        else django_tz.now()
-    )
+    if timestamp_unix:
+        timestamp = (
+            datetime.fromtimestamp(timestamp_unix, tz=timezone.utc)
+            if django_tz.is_aware(django_tz.now())
+            else datetime.fromtimestamp(timestamp_unix)
+        )
+    else:
+        timestamp = django_tz.now()
 
     # Now find what this buyer spent
     spent_mint = "So11111111111111111111111111111111111111112"
@@ -392,3 +396,144 @@ def wallet_anomaly_check():
             wallet.last_anomaly_alert_sent = django_tz.now()
             wallet.save(update_fields=["last_anomaly_alert_sent"])
             logger.info("Anomaly alert sent for wallet %s (%d buys in 2h)", wallet.nickname, recent_count)
+
+
+@shared_task
+def backfill_wallet_history_task(address: str, nickname: str, chat_id: int):
+    """
+    Backfill wallet transaction history.
+    Limits data to BACKFILL_DAYS and caps total transactions at BACKFILL_MAX_TRANSACTIONS.
+    Fails gracefully and notifies the user of the result.
+    """
+    import requests
+    import time
+    from datetime import datetime, timezone, timedelta
+    from django.conf import settings
+    from django.utils import timezone as django_tz
+    from tracker.models import Wallet, TokenBuy
+    from tracker.matching import compute_logo_hash
+    from tracker.telegram_bot import _send_message
+    from tracker import helius as helius_api
+
+    backfill_days = getattr(settings, "BACKFILL_DAYS", 30)
+    max_transactions = getattr(settings, "BACKFILL_MAX_TRANSACTIONS", 200)
+    cutoff_time = django_tz.now() - timedelta(days=backfill_days)
+    
+    api_key = settings.HELIUS_API_KEY
+    if not api_key:
+        logger.warning("Helius API key missing; skipping backfill.")
+        _send_message(chat_id, f"⚠️ I couldn't load past history for {nickname}, but live tracking is active.", parse_mode="HTML")
+        return
+
+    try:
+        wallet = Wallet.objects.get(address=address)
+    except Wallet.DoesNotExist:
+        logger.warning("Wallet %s was removed before backfill started.", address)
+        return
+
+    url = f"https://api.helius.xyz/v0/addresses/{address}/transactions"
+    params = {"api-key": api_key, "type": "SWAP"}
+    before_sig = None
+    success = True
+    fetched_count = 0
+    watched_addresses = {address}
+
+    try:
+        while True:
+            if before_sig:
+                params["before"] = before_sig
+            
+            # Fetch parsed history page
+            r = requests.get(url, params=params, timeout=15)
+            r.raise_for_status()
+            txs = r.json()
+
+            if not txs:
+                break
+
+            last_sig = None
+            reached_cutoff = False
+
+            for tx in txs:
+                fetched_count += 1
+                if fetched_count > max_transactions:
+                    logger.info("Reached maximum transaction cap of %d — stopping backfill.", max_transactions)
+                    reached_cutoff = True
+                    break
+
+                last_sig = tx.get("signature")
+                timestamp_unix = tx.get("timestamp")
+                if not timestamp_unix:
+                    continue
+                
+                tx_time = (
+                    datetime.fromtimestamp(timestamp_unix, tz=timezone.utc)
+                    if django_tz.is_aware(cutoff_time)
+                    else datetime.fromtimestamp(timestamp_unix)
+                )
+                if tx_time < cutoff_time:
+                    reached_cutoff = True
+                    break
+
+                # Skip if signature exists to avoid duplicates
+                tx_sig = tx.get("signature")
+                if tx_sig and TokenBuy.objects.filter(tx_signature=tx_sig).exists():
+                    continue
+
+                # Parse transaction
+                buy_data = _parse_buy_from_payload(tx, watched_addresses=watched_addresses)
+                if not buy_data:
+                    continue
+
+                # Fetch missing metadata
+                if not buy_data["name"] or not buy_data["symbol"]:
+                    meta = helius_api.get_token_metadata(buy_data["mint"])
+                    buy_data["name"] = buy_data["name"] or meta["name"]
+                    buy_data["symbol"] = buy_data["symbol"] or meta["symbol"]
+                    buy_data["logo_url"] = buy_data["logo_url"] or meta["logo_url"]
+
+                # Compute logo hash
+                logo_hash = compute_logo_hash(buy_data["logo_url"]) if buy_data["logo_url"] else ""
+
+                # Save record (without triggers)
+                TokenBuy.objects.create(
+                    wallet=wallet,
+                    name=buy_data["name"],
+                    symbol=buy_data["symbol"],
+                    logo_url=buy_data["logo_url"],
+                    logo_hash=logo_hash or "",
+                    contract_address=buy_data["mint"],
+                    amount=buy_data["amount"],
+                    timestamp=buy_data["timestamp"],
+                    tx_signature=tx_sig,
+                    amount_spent=buy_data["amount_spent"],
+                    spent_symbol=buy_data["spent_symbol"],
+                    raw_payload=tx,
+                )
+
+            if reached_cutoff or not last_sig:
+                break
+            
+            before_sig = last_sig
+            
+            # Rate limit protection: pause between pages
+            time.sleep(0.2)
+
+    except Exception as exc:
+        logger.exception("Error backfilling wallet %s: %s", address, exc)
+        success = False
+
+    # Send result to user
+    if success:
+        _send_message(
+            chat_id,
+            f"📥 I've also loaded this wallet's last <b>{backfill_days}</b> days of buy history (capped at {max_transactions} txs), "
+            f"so future matches can be checked against it.",
+            parse_mode="HTML"
+        )
+    else:
+        _send_message(
+            chat_id,
+            f"⚠️ I couldn't load past history for {nickname}, but live tracking is active.",
+            parse_mode="HTML"
+        )
