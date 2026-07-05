@@ -59,7 +59,7 @@ def run_sync_test():
     helius_addresses_after = fetch_helius_webhook_state()
     print(f"Helius Webhook Addresses: {helius_addresses_after}")
     assert TEST_ADDRESS not in helius_addresses_after, "TEST FAILED: Removed address still found in Helius!"
-    assert "11111111111111111111111111111111" in helius_addresses_after, "TEST FAILED: Placeholder address not set on Helius!"
+    assert "6xuDH1sVu61i2fidPc5wczdLHqmZYmMYrYZacmYbS9T2" in helius_addresses_after, "TEST FAILED: Placeholder address not set on Helius!"
     print("✅ TEST PASSED: Address removed and placeholder is successfully active on Helius!")
 
     print("\n🎉 ALL TESTS PASSED! Webhook synchronization is 100% verified in both directions.")

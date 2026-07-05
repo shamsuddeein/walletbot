@@ -14,7 +14,7 @@ import re
 
 API_KEY = settings.HELIUS_API_KEY
 WEBHOOK_URL = f"{settings.WEBHOOK_BASE_URL}/webhook/helius/"
-DEAD_PLACEHOLDER = "11111111111111111111111111111111"
+DEAD_PLACEHOLDER = "6xuDH1sVu61i2fidPc5wczdLHqmZYmMYrYZacmYbS9T2"
 
 def create_initial_webhook():
     print(f"Creating a new paused webhook on Helius with URL: {WEBHOOK_URL}...")
