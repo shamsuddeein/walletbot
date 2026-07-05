@@ -12,6 +12,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config("SECRET_KEY")
 DEBUG = config("DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="*", cast=Csv())
+CSRF_TRUSTED_ORIGINS = [
+    "https://*.up.railway.app",
+    "https://*.ngrok-free.app",
+    "https://*.ngrok-free.dev",
+]
 
 # ── Apps ──────────────────────────────────────────────────────
 INSTALLED_APPS = [
