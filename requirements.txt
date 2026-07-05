@@ -13,3 +13,4 @@ gunicorn>=21.2
 streamlit
 pandas
 plotly
+whitenoise>=6.5.0
