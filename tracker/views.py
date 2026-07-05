@@ -20,6 +20,7 @@ from django.shortcuts import render
 from django.contrib.admin.views.decorators import staff_member_required
 
 import pandas as pd
+import plotly.express as px
 
 from .tasks import process_buy_event
 from .models import TokenBuy
@@ -75,6 +76,8 @@ def admin_analytics_view(request):
         "wallet_stats": None,
         "top_tokens": None,
         "daily_stats": None,
+        "chart_wallets": None,
+        "chart_volume": None,
     }
 
     if buys.exists():
@@ -86,6 +89,23 @@ def admin_analytics_view(request):
             total_spent=("amount_spent", "sum"),
         ).reset_index()
         wallet_stats_df.columns = ["Wallet Nickname", "Total Swaps", "Total Spent"]
+        
+        # Plotly Chart 1: Swaps by Wallet
+        fig1 = px.bar(
+            wallet_stats_df,
+            x="Wallet Nickname",
+            y="Total Swaps",
+            title="Transactions by Wallet",
+            color_discrete_sequence=["#79aec8"],
+        )
+        fig1.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#71717a", size=11),
+            margin=dict(l=20, r=20, t=40, b=20),
+        )
+        context["chart_wallets"] = fig1.to_html(full_html=False, include_plotlyjs='cdn')
+
         wallet_stats_df["Total Spent"] = wallet_stats_df["Total Spent"].map(lambda x: f"{x:,.3f} SOL" if pd.notnull(x) else "0.000 SOL")
         context["wallet_stats"] = wallet_stats_df.to_html(classes="analytics-table", index=False)
 
@@ -100,5 +120,22 @@ def admin_analytics_view(request):
         daily_stats_df = df.groupby("date").size().reset_index(name="Total Swaps").sort_values("date", ascending=False)
         daily_stats_df.columns = ["Date", "Total Swaps"]
         context["daily_stats"] = daily_stats_df.to_html(classes="analytics-table", index=False)
+
+        # Plotly Chart 2: Daily Swap Volume
+        daily_chart_df = daily_stats_df.sort_values("Date")
+        fig2 = px.line(
+            daily_chart_df,
+            x="Date",
+            y="Total Swaps",
+            title="Daily Swap Volume Over Time",
+            color_discrete_sequence=["#79aec8"],
+        )
+        fig2.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#71717a", size=11),
+            margin=dict(l=20, r=20, t=40, b=20),
+        )
+        context["chart_volume"] = fig2.to_html(full_html=False, include_plotlyjs='cdn')
 
     return render(request, "admin/analytics.html", context)

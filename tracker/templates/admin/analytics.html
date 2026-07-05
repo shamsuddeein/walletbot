@@ -44,7 +44,14 @@
 {% block content %}
 <div id="content-main">
     <h1>Analytics Dashboard</h1>
-    <p class="description">Live data aggregates calculated using Pandas.</p>
+    <p class="description">Live data aggregates and interactive visualizations powered by Pandas & Plotly.</p>
+
+    <!-- Chart 1: Daily Swap Volume Over Time -->
+    {% if chart_volume %}
+    <div class="analytics-card">
+        {{ chart_volume|safe }}
+    </div>
+    {% endif %}
 
     <div class="analytics-grid">
         <!-- Card 1: Wallet Performance -->
@@ -54,6 +61,12 @@
                 {{ wallet_stats|safe }}
             {% else %}
                 <p>No swap transactions recorded yet.</p>
+            {% endif %}
+            
+            {% if chart_wallets %}
+            <div style="margin-top: 25px;">
+                {{ chart_wallets|safe }}
+            </div>
             {% endif %}
         </div>
 
@@ -68,7 +81,7 @@
         </div>
     </div>
 
-    <!-- Card 3: Daily Activity -->
+    <!-- Card 3: Daily Activity Table -->
     <div class="analytics-card" style="margin-top: 20px;">
         <h2 style="margin-top:0; color: var(--primary, #79aec8);">Daily Swap Volume History</h2>
         {% if daily_stats %}

@@ -1,0 +1,10 @@
+{% extends "admin/base.html" %}
+
+{% block branding %}
+<h1 id="site-name" style="display: inline-flex; align-items: center; gap: 15px; width: 100%;">
+  <a href="{% url 'admin:index' %}">Django administration</a>
+  <a href="{% url 'admin_analytics' %}" style="font-weight: bold; color: #ffffff; text-decoration: none; font-size: 13px; background: var(--primary-button-bg, #79aec8); padding: 4px 10px; border-radius: 4px; vertical-align: middle; transition: background 0.2s;">
+    📊 Analytics Dashboard
+  </a>
+</h1>
+{% endblock %}
