@@ -27,3 +27,7 @@ celerybeat-schedule.db
 
 # Codebase dump
 walletbot_codebase.txt
+
+# Local logs
+logs/
+

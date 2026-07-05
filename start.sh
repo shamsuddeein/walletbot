@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# Exit immediately if any command fails before backgrounding
+set -e
+
+echo "🚀 Starting WalletBot setup..."
+
+# Run database migrations
+echo "⚙️ Running database migrations..."
+python manage.py migrate
+
+# Start Celery worker + beat in the background
+echo "🔄 Starting Celery worker + beat in background..."
+celery -A walletbot worker --beat --loglevel=info --concurrency=1 &
+
+# Start Telegram bot in the background
+echo "🤖 Starting Telegram bot in background..."
+python manage.py run_bot &
+
+# Start Gunicorn in the foreground (exec to handle container lifecycle signals)
+echo "🌐 Starting Gunicorn web server..."
+exec gunicorn --bind 0.0.0.0:${PORT:-8000} walletbot.wsgi:application
