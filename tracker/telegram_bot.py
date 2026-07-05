@@ -335,6 +335,10 @@ async def handle_callback_query(update, context):
     query = update.callback_query
     await query.answer()
 
+    # Route update.message to the callback query's message so decorators/handlers work
+    if update.message is None and query.message is not None:
+        update.message = query.message
+
     data = query.data
     user_id = update.effective_user.id
     allowed = _get_allowed_user_id()

@@ -162,23 +162,28 @@ class BotConfirmationTests(IsolatedAsyncioTestCase):
     async def test_callback_profile_triggers_command(self, mock_cmd_profile):
         from tracker.telegram_bot import handle_callback_query
         
-        callback_query = AsyncMock()
+        callback_query = MagicMock()
         callback_query.data = "profile_sol2"
+        callback_query.answer = AsyncMock()
         self.update.callback_query = callback_query
+        self.update.message = None
         
         await handle_callback_query(self.update, self.context)
         
         callback_query.answer.assert_called_once()
         mock_cmd_profile.assert_called_once_with(self.update, self.context)
         self.assertEqual(self.context.args, ["sol2"])
+        self.assertEqual(self.update.message, callback_query.message)
 
     async def test_callback_remove_sets_pending_action(self):
         from tracker.telegram_bot import handle_callback_query
         
-        callback_query = AsyncMock()
+        callback_query = MagicMock()
         callback_query.data = "remove_sol2"
+        callback_query.answer = AsyncMock()
         callback_query.message = AsyncMock()
         self.update.callback_query = callback_query
+        self.update.message = None
         
         await handle_callback_query(self.update, self.context)
         
