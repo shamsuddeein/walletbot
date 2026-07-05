@@ -83,6 +83,10 @@ def admin_analytics_view(request):
     if buys.exists():
         df = pd.DataFrame(list(buys))
 
+        # Convert Decimals and nulls to float to prevent Plotly JSON serialization errors
+        df["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0.0)
+        df["amount_spent"] = pd.to_numeric(df["amount_spent"], errors="coerce").fillna(0.0)
+
         # 1. Wallet stats
         wallet_stats_df = df.groupby("wallet__nickname").agg(
             total_swaps=("amount", "count"),
@@ -115,8 +119,8 @@ def admin_analytics_view(request):
         top_tokens_df.columns = ["Token Name", "Symbol", "Total Swaps"]
         context["top_tokens"] = top_tokens_df.to_html(classes="analytics-table", index=False)
 
-        # 3. Daily volume
-        df["date"] = pd.to_datetime(df["timestamp"]).dt.date
+        # 3. Daily volume (format date to string string to avoid datetime object serialization errors)
+        df["date"] = pd.to_datetime(df["timestamp"]).dt.strftime("%Y-%m-%d")
         daily_stats_df = df.groupby("date").size().reset_index(name="Total Swaps").sort_values("date", ascending=False)
         daily_stats_df.columns = ["Date", "Total Swaps"]
         context["daily_stats"] = daily_stats_df.to_html(classes="analytics-table", index=False)
