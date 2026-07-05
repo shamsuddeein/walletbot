@@ -13,6 +13,10 @@ python manage.py collectstatic --noinput
 echo "⚙️ Running database migrations..."
 python manage.py migrate
 
+# Create superuser if it doesn't exist
+echo "👤 Creating superuser..."
+echo "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.filter(email='talktoshamsuddeen@gmail.com').exists() or User.objects.create_superuser('shamsuddeen', 'talktoshamsuddeen@gmail.com', 'Allahu_akbar01')" | python manage.py shell
+
 # Start Celery worker + beat in the background
 echo "🔄 Starting Celery worker + beat in background..."
 celery -A walletbot worker --beat --loglevel=info --concurrency=1 &
