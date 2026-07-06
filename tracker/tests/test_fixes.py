@@ -253,3 +253,194 @@ class NewFixesTests(TestCase):
         self.assertEqual(MatchAlert.objects.count(), 1)
         # and send_alert should have been called
         mock_send_alert.assert_called_once()
+
+    @patch("requests.post")
+    def test_get_token_holders_distribution(self, mock_post):
+        from tracker.helius import get_token_holders_distribution
+        
+        mock_supply_res = MagicMock()
+        mock_supply_res.json.return_value = {
+            "result": {
+                "value": {
+                    "uiAmount": 1000000.0
+                }
+            }
+        }
+        
+        mock_largest_res = MagicMock()
+        mock_largest_res.json.return_value = {
+            "result": {
+                "value": [
+                    {"address": "acc1", "uiAmount": 500000.0},
+                    {"address": "acc2", "uiAmount": 200000.0},
+                ]
+            }
+        }
+        
+        mock_multiple_res = MagicMock()
+        mock_multiple_res.json.return_value = {
+            "result": {
+                "value": [
+                    {
+                        "data": {
+                            "program": "spl-token",
+                            "parsed": {
+                                "info": {
+                                    "owner": "wallet1",
+                                    "tokenAmount": {
+                                        "uiAmount": 500000.0
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "data": {
+                            "program": "spl-token",
+                            "parsed": {
+                                "info": {
+                                    "owner": "wallet2",
+                                    "tokenAmount": {
+                                        "uiAmount": 200000.0
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        
+        mock_post.side_effect = [mock_supply_res, mock_largest_res, mock_multiple_res]
+        
+        dist = get_token_holders_distribution("some_mint")
+        
+        self.assertIsNotNone(dist)
+        self.assertEqual(dist["total_supply"], 1000000.0)
+        self.assertEqual(dist["top_10_percent"], 70.0)
+        self.assertEqual(len(dist["holders"]), 2)
+        self.assertEqual(dist["holders"][0]["owner"], "wallet1")
+        self.assertEqual(dist["holders"][0]["percentage"], 50.0)
+        self.assertEqual(dist["holders"][1]["owner"], "wallet2")
+        self.assertEqual(dist["holders"][1]["percentage"], 20.0)
+
+    @patch("requests.post")
+    def test_get_creator_token_balance(self, mock_post):
+        from tracker.helius import get_creator_token_balance
+        
+        mock_res = MagicMock()
+        mock_res.json.return_value = {
+            "result": {
+                "value": [
+                    {
+                        "account": {
+                            "data": {
+                                "parsed": {
+                                    "info": {
+                                        "tokenAmount": {
+                                            "uiAmount": 15000.0
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        mock_post.return_value = mock_res
+        
+        bal = get_creator_token_balance("some_mint", "creator_addr")
+        self.assertEqual(bal, 15000.0)
+
+    @patch("requests.post")
+    def test_get_mint_security_info(self, mock_post):
+        from tracker.helius import get_mint_security_info
+        
+        mock_res = MagicMock()
+        mock_res.json.return_value = {
+            "result": {
+                "value": [
+                    {
+                        "data": {
+                            "program": "spl-token",
+                            "parsed": {
+                                "info": {
+                                    "mintAuthority": None,
+                                    "freezeAuthority": "freeze_addr"
+                                }
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        mock_post.return_value = mock_res
+        
+        sec = get_mint_security_info("some_mint")
+        self.assertIsNotNone(sec)
+        self.assertIsNone(sec["mint_authority"])
+        self.assertEqual(sec["freeze_authority"], "freeze_addr")
+
+    @patch("tracker.telegram_bot._send_message")
+    @patch("tracker.telegram_bot._get_allowed_user_ids", return_value=[12345])
+    def test_send_alert_formats_security_and_holders_info(self, mock_get_allowed, mock_send_msg):
+        # Setup mock MatchAlert
+        past = TokenBuy.objects.create(
+            wallet=self.wallet,
+            name="PastToken",
+            symbol="PAST",
+            contract_address="past_addr",
+            timestamp=self.now,
+            amount_spent=Decimal("1.0"),
+            amount=Decimal("100.0"),
+            spent_symbol="SOL",
+        )
+        new = TokenBuy.objects.create(
+            wallet=self.wallet,
+            name="NewToken",
+            symbol="NEW",
+            logo_url="", # empty so it goes to sendMessage
+            contract_address="new_addr",
+            timestamp=self.now,
+            amount_spent=Decimal("1.5"),
+            amount=Decimal("150.0"),
+            spent_symbol="SOL",
+        )
+        alert = MatchAlert.objects.create(
+            new_buy=new,
+            matched_buy=past,
+            match_type="name",
+            name_score=90.0,
+        )
+
+        mock_send_msg.return_value = True
+
+        security_info = {
+            "holders_dist": {
+                "total_supply": 1000000.0,
+                "top_10_percent": 82.5,  # Above 70% threshold
+                "top_20_percent": 90.0,
+                "holders": []
+            },
+            "creator_balance": 150000.0,  # 15% - Above 5% threshold
+            "mint_security": {
+                "mint_authority": "some_auth",  # Enabled
+                "freeze_authority": None        # Revoked
+            }
+        }
+
+        # Send alert with security_info
+        success = send_alert(alert, security_info=security_info)
+
+        self.assertTrue(success)
+        mock_send_msg.assert_called_once()
+        
+        # Verify call args contain the formatted text
+        text_arg = mock_send_msg.call_args[0][1]
+        self.assertIn("Holder Distribution:", text_arg)
+        self.assertIn("Top 10 hold:</b> 82.5% ⚠️ (High concentration)", text_arg)
+        self.assertIn("Developer:</b> 15.0% (150.0K tokens) ⚠️ (High dev holding)", text_arg)
+        self.assertIn("Security Checks:", text_arg)
+        self.assertIn("Mint Authority:</b> ⚠️ Enabled (Dev can mint!)", text_arg)
+        self.assertIn("Freeze Authority:</b> ✅ Revoked (Cannot freeze)", text_arg)

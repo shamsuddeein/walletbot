@@ -289,10 +289,24 @@ def process_buy_event(self, payload: dict):
                     )
                     continue
 
+                # Fetch security and holder distribution info
+                holders_dist = helius_api.get_token_holders_distribution(new_buy.contract_address)
+                creator_balance = 0.0
+                if new_buy.creator:
+                    creator_balance = helius_api.get_creator_token_balance(new_buy.contract_address, new_buy.creator)
+                mint_security = helius_api.get_mint_security_info(new_buy.contract_address)
+                
+                security_info = {
+                    "holders_dist": holders_dist,
+                    "creator_balance": creator_balance,
+                    "mint_security": mint_security,
+                }
+
                 send_alert(
                     alert,
                     token_risk=token_risk,
                     dev_link_text=dev_link_text,
+                    security_info=security_info,
                 )
 
                 logger.info(

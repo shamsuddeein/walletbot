@@ -254,7 +254,7 @@ def format_time_diff(t1, t2) -> str:
     return ", ".join(parts)
 
 
-def send_alert(alert, token_risk: dict | None = None, dev_link_text: str = "", **kwargs) -> bool:
+def send_alert(alert, token_risk: dict | None = None, dev_link_text: str = "", security_info: dict | None = None, **kwargs) -> bool:
     from django.utils import timezone as django_tz
 
     new = alert.new_buy
@@ -302,6 +302,55 @@ def send_alert(alert, token_risk: dict | None = None, dev_link_text: str = "", *
         if reason:
             risk_text += f"\n└ <i>{reason}</i>"
 
+    # Format security and holder distribution info
+    security_checks_text = ""
+    holders_text = ""
+    if security_info:
+        # 1. Holders
+        dist = security_info.get("holders_dist")
+        if dist:
+            top_10 = dist.get("top_10_percent", 0.0)
+            top_20 = dist.get("top_20_percent", 0.0)
+            total_supply = dist.get("total_supply", 0.0)
+            
+            creator_bal = security_info.get("creator_balance", 0.0)
+            creator_pct = (creator_bal / total_supply) * 100.0 if total_supply > 0 else 0.0
+            
+            if creator_bal > 0:
+                dev_bal_text = f"{creator_pct:.1f}% ({format_compact_usd(creator_bal).replace('$', '')} tokens)"
+            else:
+                dev_bal_text = "0% (0 tokens)"
+
+            top_10_warn = ""
+            if top_10 >= settings.HOLDER_TOP10_WARN_THRESHOLD:
+                top_10_warn = " ⚠️ (High concentration)"
+            
+            dev_warn = ""
+            if creator_pct >= settings.DEV_HOLDING_WARN_THRESHOLD:
+                dev_warn = " ⚠️ (High dev holding)"
+
+            holders_text = (
+                f"\n\n👥 <b>Holder Distribution:</b>\n"
+                f"├ <b>Top 10 hold:</b> {top_10:.1f}%{top_10_warn}\n"
+                f"├ <b>Top 20 hold:</b> {top_20:.1f}%\n"
+                f"└ <b>Developer:</b> {dev_bal_text}{dev_warn}"
+            )
+            
+        # 2. Mint Security
+        mint_sec = security_info.get("mint_security")
+        if mint_sec:
+            mint_auth = mint_sec.get("mint_authority")
+            freeze_auth = mint_sec.get("freeze_authority")
+            
+            mint_status = "✅ Revoked (Cannot mint)" if mint_auth is None else "⚠️ Enabled (Dev can mint!)"
+            freeze_status = "✅ Revoked (Cannot freeze)" if freeze_auth is None else "⚠️ Enabled (Honeypot risk!)"
+            
+            security_checks_text = (
+                f"\n\n🔒 <b>Security Checks:</b>\n"
+                f"├ <b>Mint Authority:</b> {mint_status}\n"
+                f"└ <b>Freeze Authority:</b> {freeze_status}"
+            )
+
     # Prepend hidden link to DexScreener page instead of raw WebP logo.
     # Webpages support prefer_small_media natively for clean sidebar layout.
     hidden_logo_prefix = f'<a href="{dex_url}">&#8203;</a>'
@@ -329,6 +378,8 @@ def send_alert(alert, token_risk: dict | None = None, dev_link_text: str = "", *
         f"🎯 <b>Match Reason:</b> {match_reason}\n\n"
         f"🔑 <b>Contract:</b> <code>{new.contract_address}</code>"
         f"{risk_text}"
+        f"{holders_text}"
+        f"{security_checks_text}"
         f"{dev_link_text}"
     )
 

@@ -212,3 +212,176 @@ def get_token_creator(mint_address: str) -> Optional[str]:
         logger.warning("Error fetching transaction details for creator lookup: %s", e)
     return None
 
+
+def get_token_holders_distribution(mint_address: str) -> Optional[dict]:
+    """
+    Fetch the top 20 token holders and calculate concentration statistics.
+    Returns a dict:
+    {
+        "total_supply": float,
+        "top_10_percent": float,
+        "top_20_percent": float,
+        "holders": [
+            {"owner": str, "balance": float, "percentage": float},
+            ...
+        ]
+    }
+    """
+    url = f"https://mainnet.helius-rpc.com/?api-key={settings.HELIUS_API_KEY}"
+    
+    # 1. Fetch total supply
+    supply_payload = {
+        "jsonrpc": "2.0",
+        "id": "get-supply",
+        "method": "getTokenSupply",
+        "params": [mint_address]
+    }
+    try:
+        r = requests.post(url, json=supply_payload, timeout=10)
+        res = r.json().get("result", {})
+        supply_data = res.get("value", {})
+        total_supply = supply_data.get("uiAmount") or 0.0
+    except Exception as e:
+        logger.warning("Error fetching token supply for %s: %s", mint_address, e)
+        total_supply = 0.0
+
+    if total_supply <= 0:
+        return None
+
+    # 2. Fetch largest token accounts
+    largest_payload = {
+        "jsonrpc": "2.0",
+        "id": "get-largest",
+        "method": "getTokenLargestAccounts",
+        "params": [mint_address]
+    }
+    try:
+        r = requests.post(url, json=largest_payload, timeout=10)
+        largest_accounts = r.json().get("result", {}).get("value", [])
+    except Exception as e:
+        logger.warning("Error fetching largest token accounts for %s: %s", mint_address, e)
+        largest_accounts = []
+
+    if not largest_accounts:
+        return None
+
+    # Extract account pubkeys
+    pubkeys = [account["address"] for account in largest_accounts]
+
+    # 3. Resolve owner wallets using getMultipleAccounts with jsonParsed
+    accounts_payload = {
+        "jsonrpc": "2.0",
+        "id": "get-multiple",
+        "method": "getMultipleAccounts",
+        "params": [
+            pubkeys,
+            {"encoding": "jsonParsed"}
+        ]
+    }
+    try:
+        r = requests.post(url, json=accounts_payload, timeout=10)
+        accounts_data = r.json().get("result", {}).get("value", [])
+    except Exception as e:
+        logger.warning("Error resolving account owners for %s: %s", mint_address, e)
+        accounts_data = []
+
+    # Parse holder records
+    holders = []
+    for i, acc in enumerate(accounts_data):
+        if not acc:
+            continue
+        data = acc.get("data")
+        if isinstance(data, dict) and data.get("program") == "spl-token":
+            parsed_info = data.get("parsed", {}).get("info", {})
+            owner = parsed_info.get("owner")
+            ui_amount = parsed_info.get("tokenAmount", {}).get("uiAmount") or 0.0
+            if owner and ui_amount > 0:
+                percentage = (ui_amount / total_supply) * 100.0 if total_supply > 0 else 0.0
+                holders.append({
+                    "owner": owner,
+                    "balance": ui_amount,
+                    "percentage": percentage
+                })
+        else:
+            # Fallback if parsing failed but we had the uiAmount from getTokenLargestAccounts
+            if i < len(largest_accounts):
+                ui_amount = largest_accounts[i].get("uiAmount") or 0.0
+                percentage = (ui_amount / total_supply) * 100.0 if total_supply > 0 else 0.0
+                holders.append({
+                    "owner": "unknown (token account: " + pubkeys[i][:8] + "...)",
+                    "balance": ui_amount,
+                    "percentage": percentage
+                })
+
+    # Sort holders by balance descending
+    holders.sort(key=lambda x: x["balance"], reverse=True)
+
+    # Calculate concentration stats
+    top_10_sum = sum(h["percentage"] for h in holders[:10])
+    top_20_sum = sum(h["percentage"] for h in holders[:20])
+
+    return {
+        "total_supply": total_supply,
+        "top_10_percent": top_10_sum,
+        "top_20_percent": top_20_sum,
+        "holders": holders
+    }
+
+
+def get_creator_token_balance(mint_address: str, creator_address: str) -> float:
+    """Fetch the total token balance owned by the creator wallet."""
+    if not creator_address:
+        return 0.0
+    
+    url = f"https://mainnet.helius-rpc.com/?api-key={settings.HELIUS_API_KEY}"
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "get-creator-balance",
+        "method": "getTokenAccountsByOwner",
+        "params": [
+            creator_address,
+            {"mint": mint_address},
+            {"encoding": "jsonParsed"}
+        ]
+    }
+    try:
+        r = requests.post(url, json=payload, timeout=10)
+        value = r.json().get("result", {}).get("value", [])
+        balance = 0.0
+        for acc in value:
+            info = acc.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
+            amount = info.get("tokenAmount", {}).get("uiAmount") or 0.0
+            balance += amount
+        return balance
+    except Exception as e:
+        logger.warning("Error fetching creator token balance: %s", e)
+        return 0.0
+
+
+def get_mint_security_info(mint_address: str) -> Optional[dict]:
+    """Fetch mint information to verify authorities (mint/freeze authority revoked status)."""
+    url = f"https://mainnet.helius-rpc.com/?api-key={settings.HELIUS_API_KEY}"
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "get-mint-info",
+        "method": "getMultipleAccounts",
+        "params": [
+            [mint_address],
+            {"encoding": "jsonParsed"}
+        ]
+    }
+    try:
+        r = requests.post(url, json=payload, timeout=10)
+        value = r.json().get("result", {}).get("value", [])
+        if value and value[0]:
+            data = value[0].get("data")
+            if isinstance(data, dict) and data.get("program") == "spl-token":
+                info = data.get("parsed", {}).get("info", {})
+                return {
+                    "mint_authority": info.get("mintAuthority"),
+                    "freeze_authority": info.get("freezeAuthority"),
+                }
+    except Exception as e:
+        logger.warning("Error fetching mint info for %s: %s", mint_address, e)
+    return None
+

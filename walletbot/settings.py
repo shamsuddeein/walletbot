@@ -123,6 +123,10 @@ LOGO_MATCH_THRESHOLD = config("LOGO_MATCH_THRESHOLD", default=10, cast=int)  # i
 # Minimum liquidity filter for alerts (USD)
 MIN_LIQUIDITY_USD = config("MIN_LIQUIDITY_USD", default=500, cast=int)
 
+# Security and Holder Warning Thresholds
+HOLDER_TOP10_WARN_THRESHOLD = config("HOLDER_TOP10_WARN_THRESHOLD", default=70, cast=int)  # Warn if top 10 hold >70%
+DEV_HOLDING_WARN_THRESHOLD = config("DEV_HOLDING_WARN_THRESHOLD", default=5, cast=int)    # Warn if dev holds >5%
+
 MAX_WALLETS = 10
 
 # Backfill settings
