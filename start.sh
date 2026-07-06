@@ -21,6 +21,20 @@ echo "from django.contrib.auth import get_user_model; User = get_user_model(); U
 echo "🧼 Running duplicates cleanup..."
 python manage.py cleanup_duplicates
 
+# Configure Redis to ignore snapshotting errors (fixes Celery connection issues on Railway)
+echo "🔧 Configuring Redis settings..."
+python -c '
+import os, redis
+url = os.environ.get("REDIS_URL")
+if url:
+    try:
+        r = redis.from_url(url)
+        r.config_set("stop-writes-on-bgsave-error", "no")
+        print("✅ Configured Redis to ignore bgsave errors")
+    except Exception as e:
+        print(f"⚠️ Could not configure Redis: {e}")
+'
+
 # Start Celery worker + beat in the background
 echo "🔄 Starting Celery worker + beat in background..."
 celery -A walletbot worker --beat --loglevel=info --concurrency=1 &
