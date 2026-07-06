@@ -95,10 +95,37 @@ def get_ai_explanation(
     return _call_ai(prompt)
 
 
-def get_token_risk(name: str, symbol: str, contract_address: str) -> dict:
+def get_sol_price_usd() -> float:
+    """Fetch and cache the live SOL/USD price from DexScreener."""
+    from django.core.cache import cache
+    cached = cache.get("sol_price_usd")
+    if cached:
+        return cached
+    try:
+        r = requests.get(f"{DEXSCREENER_URL}/So11111111111111111111111111111111111111112", timeout=5)
+        data = r.json()
+        pairs = data.get("pairs") or []
+        if pairs:
+            pairs.sort(key=lambda x: x.get("liquidity", {}).get("usd", 0) or 0, reverse=True)
+            price = float(pairs[0].get("priceUsd", 140.0))
+            cache.set("sol_price_usd", price, 600)  # cache for 10 minutes
+            return price
+    except Exception as e:
+        logger.warning("Failed to fetch SOL price: %s", e)
+    return 140.0
+
+
+def get_token_risk(
+    name: str, 
+    symbol: str, 
+    contract_address: str,
+    amount_spent=None,
+    amount_received=None,
+    spent_symbol: str | None = None
+) -> dict:
     """
     Fetch live DexScreener data for a token and score its risk.
-    Uses rules-based logic by default, falling back to AI if configured.
+    Falls back to transaction-based estimation if the token is not yet indexed.
 
     Returns a dict:
         {
@@ -108,6 +135,7 @@ def get_token_risk(name: str, symbol: str, contract_address: str) -> dict:
         }
     """
     from django.core.cache import cache
+    from decimal import Decimal
     
     cache_key = f"token_risk_{contract_address}"
     cached_result = cache.get(cache_key)
@@ -136,26 +164,54 @@ def get_token_risk(name: str, symbol: str, contract_address: str) -> dict:
     except Exception as exc:
         logger.warning("DexScreener fetch failed for %s: %s", contract_address, exc)
 
+    is_estimated = False
+    if not dex_summary:
+        # Fallback: estimate market cap from transaction if possible
+        est_mc = 0.0
+        if amount_spent and amount_received and amount_received > Decimal("0.0"):
+            total_supply = 1_000_000_000  # standard for pump.fun and new tokens
+            price_native = float(amount_spent / amount_received)
+            if spent_symbol in ["SOL", "WSOL"]:
+                sol_price = get_sol_price_usd()
+                price_usd = price_native * sol_price
+            else:
+                price_usd = price_native
+            est_mc = price_usd * total_supply
+
+        if est_mc > 0:
+            is_estimated = True
+            dex_summary = {
+                "age_hours": 0.0,
+                "liquidity_usd": 0,
+                "volume_24h": 0,
+                "price_change_24h": 0,
+                "market_cap": est_mc,
+                "dex": "pump.fun" if contract_address.endswith("pump") else "unknown",
+            }
+
     if not dex_summary:
         return {"level": "UNKNOWN", "reason": "Could not fetch market data.", "dex_data": {}}
 
-    age = dex_summary.get("age_hours", 999)
-    liq = dex_summary.get("liquidity_usd", 0)
-    vol = dex_summary.get("volume_24h", 0)
-
-    # Rules-based deterministic risk assessment (instant & free)
-    if liq < 5000:
+    if is_estimated:
         level = "HIGH"
-        reason = f"Extremely low liquidity (${liq:,.0f}). High risk of dump or inability to sell."
-    elif age < 1:
-        level = "HIGH"
-        reason = f"Token is less than 1 hour old ({age:.1f}h). High risk of sudden rug pull."
-    elif liq > 50000 and age > 24:
-        level = "LOW"
-        reason = f"Healthy liquidity (${liq:,.0f}) and has been active for over 24 hours."
+        reason = "Token is not yet indexed on DexScreener. Extremely high risk of rug pull or dump."
     else:
-        level = "MEDIUM"
-        reason = f"Moderate liquidity (${liq:,.0f}) and age ({age:.1f} hours)."
+        age = dex_summary.get("age_hours", 999)
+        liq = dex_summary.get("liquidity_usd", 0)
+
+        # Rules-based deterministic risk assessment (instant & free)
+        if liq < 5000:
+            level = "HIGH"
+            reason = f"Extremely low liquidity (${liq:,.0f}). High risk of dump or inability to sell."
+        elif age < 1:
+            level = "HIGH"
+            reason = f"Token is less than 1 hour old ({age:.1f}h). High risk of sudden rug pull."
+        elif liq > 50000 and age > 24:
+            level = "LOW"
+            reason = f"Healthy liquidity (${liq:,.0f}) and has been active for over 24 hours."
+        else:
+            level = "MEDIUM"
+            reason = f"Moderate liquidity (${liq:,.0f}) and age ({age:.1f} hours)."
 
     result = {
         "level": level,

@@ -216,6 +216,9 @@ def process_buy_event(self, payload: dict):
                 name=new_buy.name or "Unknown",
                 symbol=new_buy.symbol or "?",
                 contract_address=new_buy.contract_address,
+                amount_spent=new_buy.amount_spent,
+                amount_received=new_buy.amount,
+                spent_symbol=new_buy.spent_symbol,
             )
 
             # Run matching
