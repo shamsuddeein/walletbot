@@ -35,9 +35,9 @@ if url:
         print(f"⚠️ Could not configure Redis: {e}")
 '
 
-# Start Celery worker + beat in the background
+# Start Celery worker + beat in the background (prioritized queues, concurrency=2)
 echo "🔄 Starting Celery worker + beat in background..."
-celery -A walletbot worker --beat --loglevel=info --concurrency=1 &
+celery -A walletbot worker -Q live_alerts,default,backfills --beat --loglevel=info --concurrency=2 &
 
 # Start Telegram bot in the background
 echo "🤖 Starting Telegram bot in background..."

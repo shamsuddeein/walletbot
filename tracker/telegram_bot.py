@@ -214,7 +214,7 @@ def format_time_diff(t1, t2) -> str:
     return ", ".join(parts)
 
 
-def send_alert(alert, ai_explanation: str = "", token_risk: dict | None = None, wallet_context: str = "") -> bool:
+def send_alert(alert, token_risk: dict | None = None) -> bool:
     from django.utils import timezone as django_tz
 
     new = alert.new_buy
@@ -244,6 +244,13 @@ def send_alert(alert, ai_explanation: str = "", token_risk: dict | None = None, 
     # Format URL links
     dex_url = f"https://dexscreener.com/solana/{new.contract_address}"
     solscan_url = f"https://solscan.io/token/{new.contract_address}"
+
+    # Format market cap if available
+    mc_text = ""
+    if token_risk and "dex_data" in token_risk:
+        mc = token_risk["dex_data"].get("market_cap")
+        if mc:
+            mc_text = f"\n📊 <b>Market Cap:</b> ${mc:,.0f}"
 
     # Format risk level with color-coded emoji
     risk_text = ""
@@ -277,7 +284,7 @@ def send_alert(alert, ai_explanation: str = "", token_risk: dict | None = None, 
         text += f"(obtained <code>{new.amount:,.2f}</code> {new.symbol or '?'})"
     
     text += (
-        f"\n\n"
+        f"{mc_text}\n\n"
         f"🔄 <b>Matched Buy:</b> <b>{past.name or '?'}</b> ({past.symbol or '?'})\n"
         f"⏰ <b>Bought:</b> {past_time}\n"
         f"⏳ <b>Time Between:</b> {time_diff}\n"
@@ -285,12 +292,6 @@ def send_alert(alert, ai_explanation: str = "", token_risk: dict | None = None, 
         f"🔑 <b>Contract:</b> <code>{new.contract_address}</code>"
         f"{risk_text}"
     )
-
-    if wallet_context:
-        text += f"\n\n👤 <b>Wallet Pattern:</b>\n{wallet_context}"
-
-    if ai_explanation:
-        text += f"\n\n🧠 <b>AI Analysis:</b>\n{ai_explanation}"
 
     # Construct Inline Keyboard buttons
     reply_markup = {

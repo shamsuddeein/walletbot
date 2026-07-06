@@ -118,7 +118,7 @@ def _parse_buys_from_payload(payload: dict, watched_addresses: set[str] | None =
     return buys
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+@shared_task(bind=True, queue="live_alerts", max_retries=3, default_retry_delay=30)
 def process_buy_event(self, payload: dict):
     """
     Main processing task.  Called by the webhook view for every Helius event.
@@ -207,28 +207,12 @@ def process_buy_event(self, payload: dict):
             # Get all past buys for this wallet (excluding the one we just saved)
             past_buys = TokenBuy.objects.filter(wallet=wallet).exclude(pk=new_buy.pk)
 
-            # Score token risk using live DexScreener data + AI
+            # Score token risk using live DexScreener data (instant, rules-based)
             token_risk = get_token_risk(
                 name=new_buy.name or "Unknown",
                 symbol=new_buy.symbol or "?",
                 contract_address=new_buy.contract_address,
             )
-
-            wallet_context = ""
-            # Build wallet context from recent history (only if AI is enabled)
-            if settings.OPENROUTER_API_KEY:
-                recent_buys_data = [
-                    {
-                        "name": b.name or "?",
-                        "symbol": b.symbol or "?",
-                        "timestamp_str": b.timestamp.strftime("%b %d"),
-                    }
-                    for b in past_buys.order_by("-timestamp")[:15]
-                ]
-                wallet_context = get_wallet_context(
-                    wallet_nickname=wallet.nickname,
-                    recent_buys=recent_buys_data,
-                )
 
             # Run matching
             matches = run_all_checks(new_buy, past_buys)
@@ -267,37 +251,9 @@ def process_buy_event(self, payload: dict):
                     )
                     continue
 
-                time_diff = format_time_diff(new_buy.timestamp, matched_buy.timestamp)
-
-                match_parts = []
-                if best_match.name_score is not None:
-                    if best_match.name_score >= settings.NAME_MATCH_THRESHOLD:
-                        match_parts.append(f"similar name ({best_match.name_score:.0f}%)")
-                if best_match.symbol_score is not None:
-                    if best_match.symbol_score >= settings.SYMBOL_MATCH_THRESHOLD:
-                        match_parts.append(f"similar symbol ({best_match.symbol_score:.0f}%)")
-                if best_match.logo_distance is not None:
-                    if best_match.logo_distance <= settings.LOGO_MATCH_THRESHOLD:
-                        match_parts.append("similar logo")
-                match_reason = " and ".join(match_parts) if match_parts else best_match.match_type
-
-                ai_explanation = ""
-                if settings.OPENROUTER_API_KEY:
-                    ai_explanation = get_ai_explanation(
-                        new_name=new_buy.name or "Unknown",
-                        new_symbol=new_buy.symbol or "?",
-                        past_name=matched_buy.name or "Unknown",
-                        past_symbol=matched_buy.symbol or "?",
-                        time_diff=time_diff,
-                        match_reason=match_reason,
-                        wallet_nickname=wallet.nickname,
-                    )
-
                 send_alert(
                     alert,
-                    ai_explanation=ai_explanation,
                     token_risk=token_risk,
-                    wallet_context=wallet_context,
                 )
 
                 logger.info(
@@ -326,7 +282,7 @@ def process_buy_event(self, payload: dict):
         raise self.retry(exc=exc)
 
 
-@shared_task
+@shared_task(queue="default")
 def daily_digest():
     """
     Runs every morning at 9am.
@@ -376,7 +332,7 @@ def daily_digest():
     logger.info("daily_digest sent to all allowed users.")
 
 
-@shared_task
+@shared_task(queue="default")
 def wallet_anomaly_check():
     """
     Runs every hour.
@@ -411,7 +367,7 @@ def wallet_anomaly_check():
             logger.info("Anomaly alert sent for wallet %s (%d buys in 2h)", wallet.nickname, recent_count)
 
 
-@shared_task
+@shared_task(queue="backfills")
 def backfill_wallet_history_task(address: str, nickname: str, chat_id: int):
     """
     Backfill wallet transaction history.

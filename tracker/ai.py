@@ -155,38 +155,11 @@ def get_token_risk(name: str, symbol: str, contract_address: str) -> dict:
         level = "MEDIUM"
         reason = f"Moderate liquidity (${liq:,.0f}) and age ({age:.1f} hours)."
 
-    # Only call AI if OpenRouter key is set
-    api_key = getattr(settings, "OPENROUTER_API_KEY", "")
-    if api_key:
-        prompt = (
-            f"You are a crypto risk analyst. Rate the risk of this token for a trader:\n\n"
-            f"Token: {name} ({symbol})\n"
-            f"Age: {age:.1f} hours\n"
-            f"Liquidity: ${liq:,.0f}\n"
-            f"24h volume: ${vol:,.0f}\n"
-            f"24h price change: {dex_summary.get('price_change_24h', 0):.1f}%\n"
-            f"Market cap: ${dex_summary.get('market_cap', 0):,.0f}\n"
-            f"DEX: {dex_summary.get('dex', 'unknown')}\n\n"
-            f"Reply with EXACTLY this format:\n"
-            f"LEVEL: HIGH or MEDIUM or LOW\n"
-            f"REASON: one sentence explanation"
-        )
-        ai_response = _call_ai(prompt)
-        if ai_response:
-            for line in ai_response.splitlines():
-                line = line.strip()
-                if line.upper().startswith("LEVEL:"):
-                    raw = line.split(":", 1)[1].strip().upper()
-                    if "HIGH" in raw:
-                        level = "HIGH"
-                    elif "LOW" in raw:
-                        level = "LOW"
-                    elif "MEDIUM" in raw:
-                        level = "MEDIUM"
-                elif line.upper().startswith("REASON:"):
-                    reason = line.split(":", 1)[1].strip()
-
-    result = {"level": level, "reason": reason, "dex_data": dex_summary}
+    result = {
+        "level": level,
+        "reason": reason,
+        "dex_data": dex_summary,
+    }
     cache.set(cache_key, result, 600)  # cache for 10 mins
     return result
 
