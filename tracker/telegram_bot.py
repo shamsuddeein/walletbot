@@ -63,35 +63,65 @@ def _send_message(chat_id: int | str, text: str, parse_mode: str = "HTML", reply
 
 
 
-def _get_allowed_user_id() -> int:
+def _get_allowed_user_ids() -> list[int]:
     """
-    Return the current allowed user ID.
+    Return all allowed user/chat IDs from the .env or settings.
     Re-reads from environment each call so changes written to .env
     by /claim are picked up without restarting the bot.
     """
     env_path = Path(settings.BASE_DIR) / ".env"
+    raw_val = None
     if env_path.exists():
         for line in env_path.read_text().splitlines():
-            if line.startswith("TELEGRAM_ALLOWED_USER_ID="):
-                try:
-                    return int(line.split("=", 1)[1].strip())
-                except ValueError:
-                    pass
-    return settings.TELEGRAM_ALLOWED_USER_ID
+            if line.startswith("TELEGRAM_ALLOWED_USER_IDS="):
+                raw_val = line.split("=", 1)[1].strip()
+                break
+            elif line.startswith("TELEGRAM_ALLOWED_USER_ID="):
+                raw_val = line.split("=", 1)[1].strip()
+
+    if raw_val is None:
+        return settings.TELEGRAM_ALLOWED_USER_IDS
+
+    user_ids = []
+    for item in raw_val.split(","):
+        try:
+            val = int(item.strip())
+            if val != 0:
+                user_ids.append(val)
+        except ValueError:
+            pass
+    return user_ids or [0]
+
+
+def _get_allowed_user_id() -> int:
+    """
+    Return the primary allowed user ID (the first one in the list).
+    Kept for backwards compatibility with setup scripts and ownership checks.
+    """
+    ids = _get_allowed_user_ids()
+    return ids[0] if ids else 0
 
 
 def _write_allowed_user_id(user_id: int) -> bool:
-    """Patch TELEGRAM_ALLOWED_USER_ID in the .env file at runtime."""
+    """Patch TELEGRAM_ALLOWED_USER_IDS in the .env file at runtime."""
     env_path = Path(settings.BASE_DIR) / ".env"
     if not env_path.exists():
         return False
     content = env_path.read_text()
-    new_content = re.sub(
-        r"^TELEGRAM_ALLOWED_USER_ID=.*$",
-        f"TELEGRAM_ALLOWED_USER_ID={user_id}",
-        content,
-        flags=re.MULTILINE,
-    )
+    if "TELEGRAM_ALLOWED_USER_IDS=" in content:
+        new_content = re.sub(
+            r"^TELEGRAM_ALLOWED_USER_IDS=.*$",
+            f"TELEGRAM_ALLOWED_USER_IDS={user_id}",
+            content,
+            flags=re.MULTILINE,
+        )
+    else:
+        new_content = re.sub(
+            r"^TELEGRAM_ALLOWED_USER_ID=.*$",
+            f"TELEGRAM_ALLOWED_USER_IDS={user_id}",
+            content,
+            flags=re.MULTILINE,
+        )
     env_path.write_text(new_content)
     return True
 
@@ -150,16 +180,16 @@ def owner_only(handler):
     @wraps(handler)
     async def wrapper(update, context):
         user_id = update.effective_user.id
-        allowed = _get_allowed_user_id()
+        allowed_ids = _get_allowed_user_ids()
 
-        if allowed == 0:
+        if not allowed_ids or allowed_ids == [0]:
             await update.message.reply_text(
-                "No owner configured yet. Send claim to claim this bot as yours.",
+                "No owner configured yet. Send /claim to claim this bot as yours.",
                 parse_mode="",
             )
             return
 
-        if user_id != allowed:
+        if user_id not in allowed_ids:
             await update.message.reply_text(
                 "You are not authorized to use this bot. Please contact the administrator to grant access for your account.",
                 parse_mode="",
@@ -276,14 +306,23 @@ def send_alert(alert, ai_explanation: str = "", token_risk: dict | None = None, 
         ]
     }
 
-    chat_id = _get_allowed_user_id()
-    return _send_message(
-        chat_id, 
-        text, 
-        parse_mode="HTML", 
-        reply_markup=reply_markup,
-        link_preview_options=link_preview_opts
-    )
+    chat_ids = _get_allowed_user_ids()
+    if not chat_ids:
+        logger.warning("No allowed Telegram chat IDs configured to receive alerts.")
+        return False
+
+    success = True
+    for chat_id in chat_ids:
+        ok = _send_message(
+            chat_id, 
+            text, 
+            parse_mode="HTML", 
+            reply_markup=reply_markup,
+            link_preview_options=link_preview_opts
+        )
+        if not ok:
+            success = False
+    return success
 
 
 # ── Command handlers ──────────────────────────────────────────────────────────

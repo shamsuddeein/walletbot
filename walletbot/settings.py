@@ -101,7 +101,11 @@ HELIUS_WEBHOOK_ID = config("HELIUS_WEBHOOK_ID", default="")
 HELIUS_WEBHOOK_SECRET = config("HELIUS_WEBHOOK_SECRET", default="")
 
 TELEGRAM_BOT_TOKEN = config("TELEGRAM_BOT_TOKEN", default="")
-TELEGRAM_ALLOWED_USER_ID = config("TELEGRAM_ALLOWED_USER_ID", default="0", cast=int)
+TELEGRAM_ALLOWED_USER_IDS = config(
+    "TELEGRAM_ALLOWED_USER_IDS",
+    default=config("TELEGRAM_ALLOWED_USER_ID", default="0"),
+    cast=lambda v: [int(x.strip()) for x in v.split(",") if x.strip()]
+)
 
 OPENROUTER_API_KEY = config("OPENROUTER_API_KEY", default="")
 

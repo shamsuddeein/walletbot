@@ -331,16 +331,17 @@ def process_buy_event(self, payload: dict):
         # DEBUG mode: notify if a buy was successfully processed but no matches were found
         from django.conf import settings
         if not matches and settings.DEBUG:
-            from tracker.telegram_bot import _send_message, _get_allowed_user_id
-            chat_id = _get_allowed_user_id()
-            if chat_id != 0:
-                _send_message(
-                    chat_id,
-                    f"ℹ️ <b>Buy Processed:</b> {new_buy.name or '?'} ({new_buy.symbol or '?'})\n"
-                    f"Wallet: {wallet.nickname}\n"
-                    f"Compared against {past_buys.count()} past buys. No similar tokens found.",
-                    parse_mode="HTML"
-                )
+            from tracker.telegram_bot import _send_message, _get_allowed_user_ids
+            chat_ids = _get_allowed_user_ids()
+            for chat_id in chat_ids:
+                if chat_id != 0:
+                    _send_message(
+                        chat_id,
+                        f"ℹ️ <b>Buy Processed:</b> {new_buy.name or '?'} ({new_buy.symbol or '?'})\n"
+                        f"Wallet: {wallet.nickname}\n"
+                        f"Compared against {past_buys.count()} past buys. No similar tokens found.",
+                        parse_mode="HTML"
+                    )
 
     except Exception as exc:
         logger.exception("process_buy_event failed: %s", exc)
@@ -358,7 +359,7 @@ def daily_digest():
     from django.utils import timezone as django_tz
     from tracker.models import Wallet, TokenBuy, MatchAlert
     from tracker.ai import generate_daily_digest
-    from tracker.telegram_bot import _send_message, _get_allowed_user_id
+    from tracker.telegram_bot import _send_message, _get_allowed_user_ids
 
     since = django_tz.now() - timedelta(hours=24)
     wallets = Wallet.objects.all()
@@ -390,10 +391,11 @@ def daily_digest():
         logger.warning("daily_digest: AI returned empty text.")
         return
 
-    chat_id = _get_allowed_user_id()
-    if chat_id:
-        _send_message(chat_id, f"Good morning.\n\n{digest_text}")
-        logger.info("daily_digest sent.")
+    chat_ids = _get_allowed_user_ids()
+    for chat_id in chat_ids:
+        if chat_id:
+            _send_message(chat_id, f"Good morning.\n\n{digest_text}")
+    logger.info("daily_digest sent to all allowed users.")
 
 
 @shared_task
@@ -405,11 +407,11 @@ def wallet_anomaly_check():
     from datetime import timedelta
     from django.utils import timezone as django_tz
     from tracker.models import Wallet, TokenBuy
-    from tracker.telegram_bot import _send_message, _get_allowed_user_id
+    from tracker.telegram_bot import _send_message, _get_allowed_user_ids
 
     since = django_tz.now() - timedelta(hours=2)
     wallets = Wallet.objects.all()
-    chat_id = _get_allowed_user_id()
+    chat_ids = _get_allowed_user_ids()
 
     for wallet in wallets:
         # Prevent duplicate alert spam by enforcing a 2-hour cooldown
@@ -419,11 +421,12 @@ def wallet_anomaly_check():
 
         recent_count = TokenBuy.objects.filter(wallet=wallet, timestamp__gte=since).count()
         if recent_count >= 3:
-            _send_message(
-                chat_id,
-                f"Unusual activity: {wallet.nickname} has made {recent_count} buys in the last 2 hours.\n"
-                f"This is higher than normal. Could be a coordinated move — worth watching closely."
-            )
+            for chat_id in chat_ids:
+                _send_message(
+                    chat_id,
+                    f"Unusual activity: {wallet.nickname} has made {recent_count} buys in the last 2 hours.\n"
+                    f"This is higher than normal. Could be a coordinated move — worth watching closely."
+                )
             # Update last anomaly alert sent timestamp
             wallet.last_anomaly_alert_sent = django_tz.now()
             wallet.save(update_fields=["last_anomaly_alert_sent"])
