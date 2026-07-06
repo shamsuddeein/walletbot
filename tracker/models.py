@@ -34,6 +34,7 @@ class TokenBuy(models.Model):
     tx_signature = models.CharField(max_length=88, null=True, blank=True, db_index=True)
     amount_spent = models.DecimalField(max_digits=20, decimal_places=9, null=True, blank=True)
     spent_symbol = models.CharField(max_length=16, default="SOL")
+    creator = models.CharField(max_length=100, blank=True, null=True, db_index=True)
     raw_payload = models.JSONField(default=dict, blank=True)  # full Helius payload for debugging
 
     class Meta:

@@ -228,7 +228,7 @@ def format_time_diff(t1, t2) -> str:
     return ", ".join(parts)
 
 
-def send_alert(alert, token_risk: dict | None = None) -> bool:
+def send_alert(alert, token_risk: dict | None = None, dev_link_text: str = "") -> bool:
     from django.utils import timezone as django_tz
 
     new = alert.new_buy
@@ -303,6 +303,7 @@ def send_alert(alert, token_risk: dict | None = None) -> bool:
         f"🎯 <b>Match Reason:</b> {match_reason}\n\n"
         f"🔑 <b>Contract:</b> <code>{new.contract_address}</code>"
         f"{risk_text}"
+        f"{dev_link_text}"
     )
 
     # Construct Inline Keyboard buttons

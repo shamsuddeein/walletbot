@@ -153,3 +153,62 @@ def get_token_metadata(mint_address: str) -> dict:
     except Exception as exc:
         logger.warning("Could not fetch metadata for %s: %s", mint_address, exc)
         return {"name": "", "symbol": "", "logo_url": ""}
+
+
+def get_token_creator(mint_address: str) -> Optional[str]:
+    """
+    Fetch the developer (creator) wallet address of a mint using Helius RPC.
+    Paginates backwards to find the creation transaction and extracts the signer.
+    """
+    url = f"https://mainnet.helius-rpc.com/?api-key={settings.HELIUS_API_KEY}"
+    before = None
+    oldest_sig = None
+
+    # Paginate up to 3 times (3000 signatures) to locate the creation signature
+    for _ in range(3):
+        params = {"limit": 1000}
+        if before:
+            params["before"] = before
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "get-sigs",
+            "method": "getSignaturesForAddress",
+            "params": [mint_address, params]
+        }
+        try:
+            r = requests.post(url, json=payload, timeout=10)
+            res = r.json().get("result", [])
+            if not res:
+                break
+            oldest_sig = res[-1].get("signature")
+            before = oldest_sig
+            if len(res) < 1000:
+                break
+        except Exception as e:
+            logger.warning("Error fetching signatures for creator lookup: %s", e)
+            break
+
+    if not oldest_sig:
+        return None
+
+    # Fetch transaction to extract the fee-paying signer (developer)
+    tx_payload = {
+        "jsonrpc": "2.0",
+        "id": "get-tx",
+        "method": "getTransaction",
+        "params": [oldest_sig, {"maxSupportedTransactionVersion": 0}]
+    }
+    try:
+        r = requests.post(url, json=tx_payload, timeout=10)
+        tx_data = r.json().get("result", {})
+        if tx_data:
+            message = tx_data.get("transaction", {}).get("message", {})
+            account_keys = message.get("accountKeys", [])
+            if not account_keys:
+                account_keys = message.get("staticAccountKeys", [])
+            if account_keys:
+                return account_keys[0]  # First key is the signer/creator
+    except Exception as e:
+        logger.warning("Error fetching transaction details for creator lookup: %s", e)
+    return None
+

@@ -192,6 +192,9 @@ def process_buy_event(self, payload: dict):
             # Compute logo hash now, store it so future comparisons are instant
             logo_hash = compute_logo_hash(buy_data["logo_url"]) if buy_data["logo_url"] else ""
 
+            # Resolve developer address using Helius RPC
+            creator_address = helius_api.get_token_creator(buy_data["mint"])
+
             # Save the buy
             new_buy = TokenBuy.objects.create(
                 wallet=wallet,
@@ -205,6 +208,7 @@ def process_buy_event(self, payload: dict):
                 tx_signature=tx_sig,
                 amount_spent=buy_data["amount_spent"],
                 spent_symbol=buy_data["spent_symbol"],
+                creator=creator_address,
                 raw_payload=payload,
             )
 
@@ -258,9 +262,24 @@ def process_buy_event(self, payload: dict):
                     )
                     continue
 
+                dev_link_text = ""
+                if new_buy.creator:
+                    same_dev_buys = TokenBuy.objects.filter(
+                        creator=new_buy.creator
+                    ).exclude(contract_address=new_buy.contract_address).order_by("-timestamp")
+                    if same_dev_buys.exists():
+                        past_dev = same_dev_buys.first()
+                        dev_diff = format_time_diff(new_buy.timestamp, past_dev.timestamp)
+                        dev_link_text = (
+                            f"\n\n⚠️ <b>Dev Match Warning:</b>\n"
+                            f"└ Created by the same dev as <b>{past_dev.name or '?'} ({past_dev.symbol or '?'})</b> "
+                            f"(bought by {past_dev.wallet.nickname} {dev_diff} ago)"
+                        )
+
                 send_alert(
                     alert,
                     token_risk=token_risk,
+                    dev_link_text=dev_link_text,
                 )
 
                 logger.info(
