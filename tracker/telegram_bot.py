@@ -60,6 +60,29 @@ def _send_message(chat_id: int | str, text: str, parse_mode: str = "HTML", reply
         return False
 
 
+def _send_photo(chat_id: int | str, photo_url: str, caption: str, parse_mode: str = "HTML", reply_markup: dict | None = None) -> bool:
+    """Send a photo with caption via the Telegram Bot API HTTP endpoint."""
+    payload = {
+        "chat_id": chat_id,
+        "photo": photo_url,
+        "caption": caption,
+        "parse_mode": parse_mode
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    try:
+        r = requests.post(
+            f"{TELEGRAM_API_BASE}/sendPhoto",
+            json=payload,
+            timeout=10,
+        )
+        r.raise_for_status()
+        return True
+    except Exception as exc:
+        logger.error("Telegram sendPhoto failed for photo_url %s: %s", photo_url, exc)
+        return False
+
+
 def _get_allowed_user_id() -> int:
     """
     Return the current allowed user ID.
@@ -263,6 +286,25 @@ def send_alert(alert, ai_explanation: str = "", token_risk: dict | None = None, 
     }
 
     chat_id = _get_allowed_user_id()
+
+    # Attempt to send with photo if logo_url is available
+    if new.logo_url:
+        logger.info("Attempting to send alert with photo from logo_url: %s", new.logo_url)
+        success = _send_photo(chat_id, new.logo_url, text, reply_markup=reply_markup)
+        if success:
+            # Send past logo as a secondary image right after if available
+            if past.logo_url:
+                logger.info("Sending matched past token logo: %s", past.logo_url)
+                _send_photo(
+                    chat_id,
+                    past.logo_url,
+                    f"Previous buy: <b>{past.name or '?'}</b> ({past.symbol or '?'})"
+                )
+            return True
+        else:
+            logger.warning("Failed to send alert with photo; falling back to text-only alert.")
+
+    # Fallback to plain text message
     return _send_message(chat_id, text, parse_mode="HTML", reply_markup=reply_markup)
 
 
