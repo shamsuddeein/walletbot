@@ -270,6 +270,40 @@ def process_buy_event(self, payload: dict):
                     best_match.match_type,
                 )
 
+            # After saving the new buy, check for Coordinated buys (2+ wallets buying same token in 60m)
+            from django.core.cache import cache
+            from datetime import timedelta
+            from django.utils import timezone as django_tz
+            from tracker.telegram_bot import send_coordinated_alert
+
+            # Query all buys of this token in the last 60 minutes
+            time_threshold = django_tz.now() - timedelta(minutes=60)
+            recent_token_buys = TokenBuy.objects.filter(
+                contract_address=new_buy.contract_address,
+                timestamp__gte=time_threshold
+            ).order_by("timestamp")
+
+            # Group by unique wallets
+            unique_wallets_buys = {}
+            for tb in recent_token_buys:
+                unique_wallets_buys[tb.wallet.address] = tb
+
+            unique_buyer_count = len(unique_wallets_buys)
+            if unique_buyer_count >= 2:
+                # Get list of unique buys ordered by timestamp
+                sorted_buys = sorted(unique_wallets_buys.values(), key=lambda x: x.timestamp)
+                
+                # Deduplicate using cache key
+                cache_key = f"coor_alert_{new_buy.contract_address}_{unique_buyer_count}"
+                if not cache.get(cache_key):
+                    cache.set(cache_key, True, 7200)  # cache for 2 hours
+                    send_coordinated_alert(new_buy.contract_address, sorted_buys, token_risk)
+                    logger.info(
+                        "Coordinated Buy Alert triggered for %s (%d wallets)",
+                        new_buy.contract_address,
+                        unique_buyer_count
+                    )
+
             # DEBUG mode: notify if a buy was successfully processed but no matches were found
             if not matches and settings.DEBUG:
                 from tracker.telegram_bot import _send_message, _get_allowed_user_ids

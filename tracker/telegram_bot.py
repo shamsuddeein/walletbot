@@ -338,6 +338,97 @@ def send_alert(alert, token_risk: dict | None = None) -> bool:
     return success
 
 
+def send_coordinated_alert(contract_address: str, buys: list, token_risk: dict | None = None) -> bool:
+    """Send a coordinated buy alert showing all participating wallets."""
+    from django.utils import timezone as django_tz
+    from tracker.telegram_bot import _send_message, _get_allowed_user_ids, format_compact_usd
+
+    if not buys:
+        return False
+
+    first_buy = buys[0]
+    wallet_count = len(buys)
+    token_name = first_buy.name or "Unknown"
+    token_symbol = first_buy.symbol or "?"
+
+    # Format list of buyers
+    buyer_lines = []
+    now = django_tz.now()
+    for i, tb in enumerate(buys, start=1):
+        diff = now - tb.timestamp
+        mins_ago = int(diff.total_seconds() // 60)
+        time_str = "just now" if mins_ago < 1 else f"{mins_ago}m ago"
+        buyer_lines.append(
+            f"{i}. 👤 <b>{tb.wallet.nickname}</b> ({time_str}): <code>{tb.amount_spent:,.4f}</code> {tb.spent_symbol}"
+        )
+    buyers_text = "\n".join(buyer_lines)
+
+    dex_url = f"https://dexscreener.com/solana/{contract_address}"
+    solscan_url = f"https://solscan.io/token/{contract_address}"
+
+    # Format market cap if available
+    mc_text = ""
+    if token_risk and "dex_data" in token_risk:
+        mc = token_risk["dex_data"].get("market_cap")
+        if mc:
+            mc_text = f"\n📊 <b>Market Cap:</b> {format_compact_usd(mc)}"
+
+    # Format risk level
+    risk_text = ""
+    if token_risk and token_risk.get("level") != "UNKNOWN":
+        level = token_risk["level"]
+        risk_emoji = "🔴" if level == "HIGH" else ("🟡" if level == "MEDIUM" else "🟢")
+        reason = token_risk.get("reason", "")
+        risk_text = f"\n\n⚡️ <b>Risk Level:</b> {risk_emoji} <b>{level}</b>"
+        if reason:
+            risk_text += f"\n└ <i>{reason}</i>"
+
+    # Prepend hidden link to DexScreener page for clean sidebar layout
+    hidden_logo_prefix = f'<a href="{dex_url}">&#8203;</a>'
+    link_preview_opts = {
+        "url": dex_url,
+        "prefer_small_media": True,
+        "show_above_text": False
+    }
+
+    text = (
+        f"{hidden_logo_prefix}🚨 <b>Coordinated Buy Alert! ({wallet_count} Wallets)</b>\n\n"
+        f"👥 <b>{wallet_count} wallets</b> accumulated <b>{token_name} ({token_symbol})</b> in the last 60 minutes:\n"
+        f"{buyers_text}"
+        f"{mc_text}\n\n"
+        f"🔑 <b>Contract:</b> <code>{contract_address}</code>"
+        f"{risk_text}"
+    )
+
+    reply_markup = {
+        "inline_keyboard": [
+            [
+                {"text": "📈 DexScreener", "url": dex_url},
+                {"text": "🔍 Solscan", "url": solscan_url},
+            ]
+        ]
+    }
+
+    chat_ids = _get_allowed_user_ids()
+    if not chat_ids:
+        logger.warning("No allowed Telegram chat IDs configured to receive coordinated alerts.")
+        return False
+
+    success = True
+    for chat_id in chat_ids:
+        ok = _send_message(
+            chat_id, 
+            text, 
+            parse_mode="HTML", 
+            reply_markup=reply_markup,
+            link_preview_options=link_preview_opts
+        )
+        if not ok:
+            success = False
+    return success
+
+
+
 # ── Command handlers ──────────────────────────────────────────────────────────
 
 async def cmd_claim(update, context):
