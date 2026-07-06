@@ -292,14 +292,6 @@ def send_alert(alert, ai_explanation: str = "", token_risk: dict | None = None, 
         logger.info("Attempting to send alert with photo from logo_url: %s", new.logo_url)
         success = _send_photo(chat_id, new.logo_url, text, reply_markup=reply_markup)
         if success:
-            # Send past logo as a secondary image right after if available
-            if past.logo_url:
-                logger.info("Sending matched past token logo: %s", past.logo_url)
-                _send_photo(
-                    chat_id,
-                    past.logo_url,
-                    f"Previous buy: <b>{past.name or '?'}</b> ({past.symbol or '?'})"
-                )
             return True
         else:
             logger.warning("Failed to send alert with photo; falling back to text-only alert.")

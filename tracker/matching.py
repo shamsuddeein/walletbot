@@ -43,7 +43,6 @@ class MatchResult:
         return (
             (self.name_score is not None and self.name_score >= settings.NAME_MATCH_THRESHOLD)
             or (self.symbol_score is not None and self.symbol_score >= settings.SYMBOL_MATCH_THRESHOLD)
-            or (self.logo_distance is not None and self.logo_distance <= settings.LOGO_MATCH_THRESHOLD)
         )
 
     @property

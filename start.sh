@@ -13,6 +13,10 @@ python manage.py collectstatic --noinput
 echo "⚙️ Running database migrations..."
 python manage.py migrate
 
+# Sync Helius webhooks on startup to fix mismatched watch lists
+echo "📡 Syncing Helius webhooks with database..."
+python manage.py sync_helius_webhooks
+
 # Create superuser if it doesn't exist
 echo "👤 Creating superuser..."
 echo "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.filter(email='talktoshamsuddeen@gmail.com').exists() or User.objects.create_superuser('shamsuddeen', 'talktoshamsuddeen@gmail.com', 'Allahu_akbar01')" | python manage.py shell
