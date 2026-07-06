@@ -165,6 +165,7 @@ def process_buy_event(self, payload: dict):
     from tracker.matching import run_all_checks, compute_logo_hash
     from tracker.telegram_bot import send_alert, format_time_diff
     from tracker.ai import get_ai_explanation, get_token_risk, get_wallet_context
+    from datetime import timedelta
 
     try:
         buy_data = _parse_buy_from_payload(payload)
@@ -185,6 +186,22 @@ def process_buy_event(self, payload: dict):
             if TokenBuy.objects.filter(tx_signature=tx_sig).exists():
                 logger.info("Transaction %s already processed — skipping.", tx_sig)
                 return
+
+        # Check for near-duplicate by wallet, contract_address, and timestamp within 5 seconds
+        time_min = buy_data["timestamp"] - timedelta(seconds=5)
+        time_max = buy_data["timestamp"] + timedelta(seconds=5)
+        if TokenBuy.objects.filter(
+            wallet=wallet,
+            contract_address=buy_data["mint"],
+            timestamp__range=(time_min, time_max)
+        ).exists():
+            logger.info(
+                "A TokenBuy for wallet %s, mint %s around timestamp %s already exists (5s window) — skipping.",
+                wallet.address,
+                buy_data["mint"],
+                buy_data["timestamp"]
+            )
+            return
 
         # Fetch missing metadata from Helius if the payload didn't include it
         if not buy_data["name"] or not buy_data["symbol"]:
@@ -255,6 +272,21 @@ def process_buy_event(self, payload: dict):
                 symbol_score=match_result.symbol_score,
                 logo_distance=match_result.logo_distance,
             )
+
+            # Check if this exact pair has already been alerted for this wallet before
+            already_alerted = MatchAlert.objects.filter(
+                new_buy__wallet=wallet,
+                new_buy__contract_address=new_buy.contract_address,
+                matched_buy__contract_address=matched_buy.contract_address,
+            ).exclude(pk=alert.pk).exists()
+
+            if already_alerted:
+                logger.info(
+                    "MatchAlert saved to database, but Telegram alert skipped (already sent before for this pair: new_buy=%s, matched_buy=%s).",
+                    new_buy.contract_address,
+                    matched_buy.contract_address,
+                )
+                continue
 
             time_diff = format_time_diff(new_buy.timestamp, matched_buy.timestamp)
 
@@ -483,6 +515,22 @@ def backfill_wallet_history_task(address: str, nickname: str, chat_id: int):
                 # Parse transaction
                 buy_data = _parse_buy_from_payload(tx, watched_addresses=watched_addresses)
                 if not buy_data:
+                    continue
+
+                # Check for near-duplicate by wallet, contract_address, and timestamp within 5 seconds
+                time_min = buy_data["timestamp"] - timedelta(seconds=5)
+                time_max = buy_data["timestamp"] + timedelta(seconds=5)
+                if TokenBuy.objects.filter(
+                    wallet=wallet,
+                    contract_address=buy_data["mint"],
+                    timestamp__range=(time_min, time_max)
+                ).exists():
+                    logger.info(
+                        "Backfill: A TokenBuy for wallet %s, mint %s around timestamp %s already exists (5s window) — skipping.",
+                        wallet.address,
+                        buy_data["mint"],
+                        buy_data["timestamp"]
+                    )
                     continue
 
                 # Fetch missing metadata
