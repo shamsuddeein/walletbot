@@ -122,6 +122,8 @@ def get_token_risk(name: str, symbol: str, contract_address: str) -> dict:
         data = r.json()
         pairs = data.get("pairs") or []
         if pairs:
+            # Sort pools by liquidity descending to get the main active pool
+            pairs.sort(key=lambda x: x.get("liquidity", {}).get("usd", 0) or 0, reverse=True)
             p = pairs[0]
             dex_summary = {
                 "age_hours": _pair_age_hours(p),

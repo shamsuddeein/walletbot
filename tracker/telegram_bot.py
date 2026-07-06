@@ -200,7 +200,21 @@ def owner_only(handler):
     return wrapper
 
 
-# ── Alert formatter ───────────────────────────────────────────────────────────
+def format_compact_usd(val: float | Decimal) -> str:
+    """Format large numbers into compact K/M/B notation."""
+    try:
+        val_float = float(val)
+    except (ValueError, TypeError):
+        return str(val)
+
+    if val_float >= 1_000_000_000:
+        return f"${val_float / 1_000_000_000:.1f}B"
+    if val_float >= 1_000_000:
+        return f"${val_float / 1_000_000:.1f}M"
+    if val_float >= 1_000:
+        return f"${val_float / 1_000:.1f}K"
+    return f"${val_float:.0f}"
+
 
 def format_time_diff(t1, t2) -> str:
     diff = abs(t1 - t2)
@@ -245,12 +259,12 @@ def send_alert(alert, token_risk: dict | None = None) -> bool:
     dex_url = f"https://dexscreener.com/solana/{new.contract_address}"
     solscan_url = f"https://solscan.io/token/{new.contract_address}"
 
-    # Format market cap if available
+    # Format market cap using compact USD helper if available
     mc_text = ""
     if token_risk and "dex_data" in token_risk:
         mc = token_risk["dex_data"].get("market_cap")
         if mc:
-            mc_text = f"\n📊 <b>Market Cap:</b> ${mc:,.0f}"
+            mc_text = f"\n📊 <b>Market Cap:</b> {format_compact_usd(mc)}"
 
     # Format risk level with color-coded emoji
     risk_text = ""
@@ -262,16 +276,14 @@ def send_alert(alert, token_risk: dict | None = None) -> bool:
         if reason:
             risk_text += f"\n└ <i>{reason}</i>"
 
-    # Prepend hidden link for small side-by-side logo layout if available
-    hidden_logo_prefix = ""
-    link_preview_opts = None
-    if new.logo_url:
-        hidden_logo_prefix = f'<a href="{new.logo_url}">&#8203;</a>'
-        link_preview_opts = {
-            "url": new.logo_url,
-            "prefer_small_media": True,
-            "show_above_text": False
-        }
+    # Prepend hidden link to DexScreener page instead of raw WebP logo.
+    # Webpages support prefer_small_media natively for clean sidebar layout.
+    hidden_logo_prefix = f'<a href="{dex_url}">&#8203;</a>'
+    link_preview_opts = {
+        "url": dex_url,
+        "prefer_small_media": True,
+        "show_above_text": False
+    }
 
     # Build rich HTML message
     text = (

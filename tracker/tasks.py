@@ -99,7 +99,11 @@ def _parse_buys_from_payload(payload: dict, watched_addresses: set[str] | None =
                                 spent_amount = Decimal(str(tok_raw_amount)) if tok_raw_amount is not None else Decimal("0.0")
                             except Exception:
                                 spent_amount = Decimal("0.0")
-                            spent_symbol = token_tx.get("tokenSymbol", "TOKEN")
+                            raw_sym = token_tx.get("tokenSymbol")
+                            if tok_mint == "So11111111111111111111111111111111111111112":
+                                spent_symbol = "SOL"
+                            else:
+                                spent_symbol = raw_sym or "TOKEN"
                             break
 
             buys.append({
