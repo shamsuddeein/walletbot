@@ -42,11 +42,13 @@ def _make_aware(dt):
     return dt
 
 
-def _send_message(chat_id: int | str, text: str, parse_mode: str = "HTML", reply_markup: dict | None = None) -> bool:
+def _send_message(chat_id: int | str, text: str, parse_mode: str = "HTML", reply_markup: dict | None = None, link_preview_options: dict | None = None) -> bool:
     """Send a message via the Telegram Bot API HTTP endpoint."""
     payload = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
     if reply_markup:
         payload["reply_markup"] = reply_markup
+    if link_preview_options:
+        payload["link_preview_options"] = link_preview_options
     try:
         r = requests.post(
             f"{TELEGRAM_API_BASE}/sendMessage",
@@ -59,28 +61,6 @@ def _send_message(chat_id: int | str, text: str, parse_mode: str = "HTML", reply
         logger.error("Telegram sendMessage failed: %s", exc)
         return False
 
-
-def _send_photo(chat_id: int | str, photo_url: str, caption: str, parse_mode: str = "HTML", reply_markup: dict | None = None) -> bool:
-    """Send a photo with caption via the Telegram Bot API HTTP endpoint."""
-    payload = {
-        "chat_id": chat_id,
-        "photo": photo_url,
-        "caption": caption,
-        "parse_mode": parse_mode
-    }
-    if reply_markup:
-        payload["reply_markup"] = reply_markup
-    try:
-        r = requests.post(
-            f"{TELEGRAM_API_BASE}/sendPhoto",
-            json=payload,
-            timeout=10,
-        )
-        r.raise_for_status()
-        return True
-    except Exception as exc:
-        logger.error("Telegram sendPhoto failed for photo_url %s: %s", photo_url, exc)
-        return False
 
 
 def _get_allowed_user_id() -> int:
@@ -245,9 +225,20 @@ def send_alert(alert, ai_explanation: str = "", token_risk: dict | None = None, 
         if reason:
             risk_text += f"\n└ <i>{reason}</i>"
 
+    # Prepend hidden link for small side-by-side logo layout if available
+    hidden_logo_prefix = ""
+    link_preview_opts = None
+    if new.logo_url:
+        hidden_logo_prefix = f'<a href="{new.logo_url}">&#8203;</a>'
+        link_preview_opts = {
+            "url": new.logo_url,
+            "prefer_small_media": True,
+            "show_above_text": False
+        }
+
     # Build rich HTML message
     text = (
-        f"🚨 <b>Similarity Alert for {wallet.nickname}</b>\n\n"
+        f"{hidden_logo_prefix}🚨 <b>Similarity Alert for {wallet.nickname}</b>\n\n"
         f"🆕 <b>New Buy:</b> <b>{new.name or '?'}</b> ({new.symbol or '?'})\n"
         f"⏰ <b>Bought:</b> {new_time}\n"
         f"💳 <b>Spent:</b> <code>{new.amount_spent:,.4f}</code> {new.spent_symbol} "
@@ -286,18 +277,13 @@ def send_alert(alert, ai_explanation: str = "", token_risk: dict | None = None, 
     }
 
     chat_id = _get_allowed_user_id()
-
-    # Attempt to send with photo if logo_url is available
-    if new.logo_url:
-        logger.info("Attempting to send alert with photo from logo_url: %s", new.logo_url)
-        success = _send_photo(chat_id, new.logo_url, text, reply_markup=reply_markup)
-        if success:
-            return True
-        else:
-            logger.warning("Failed to send alert with photo; falling back to text-only alert.")
-
-    # Fallback to plain text message
-    return _send_message(chat_id, text, parse_mode="HTML", reply_markup=reply_markup)
+    return _send_message(
+        chat_id, 
+        text, 
+        parse_mode="HTML", 
+        reply_markup=reply_markup,
+        link_preview_options=link_preview_opts
+    )
 
 
 # ── Command handlers ──────────────────────────────────────────────────────────

@@ -21,10 +21,6 @@ python manage.py sync_helius_webhooks
 echo "👤 Creating superuser..."
 echo "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.filter(email='talktoshamsuddeen@gmail.com').exists() or User.objects.create_superuser('shamsuddeen', 'talktoshamsuddeen@gmail.com', 'Allahu_akbar01')" | python manage.py shell
 
-# Run duplicates cleanup on startup
-echo "🧼 Running duplicates cleanup..."
-python manage.py cleanup_duplicates
-
 # Configure Redis to ignore snapshotting errors (fixes Celery connection issues on Railway)
 echo "🔧 Configuring Redis settings..."
 python -c '
