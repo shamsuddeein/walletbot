@@ -31,13 +31,14 @@ class TokenBuy(models.Model):
     contract_address = models.CharField(max_length=44)
     amount = models.DecimalField(max_digits=20, decimal_places=9, null=True, blank=True)
     timestamp = models.DateTimeField()
-    tx_signature = models.CharField(max_length=88, unique=True, null=True, blank=True, db_index=True)
+    tx_signature = models.CharField(max_length=88, null=True, blank=True, db_index=True)
     amount_spent = models.DecimalField(max_digits=20, decimal_places=9, null=True, blank=True)
     spent_symbol = models.CharField(max_length=16, default="SOL")
     raw_payload = models.JSONField(default=dict, blank=True)  # full Helius payload for debugging
 
     class Meta:
         ordering = ["-timestamp"]
+        unique_together = ("wallet", "tx_signature")
         indexes = [
             models.Index(fields=["wallet", "-timestamp"]),
         ]

@@ -142,6 +142,11 @@ def run_all_checks(new_buy, past_buys) -> List[MatchResult]:
         if past.contract_address == new_buy.contract_address:
             continue
 
+        # Check time difference (exclude concurrent/bundle buys within 15 minutes)
+        time_diff = abs(new_buy.timestamp - past.timestamp)
+        if time_diff.total_seconds() < 900:  # 15 minutes = 900 seconds
+            continue
+
         result = MatchResult(matched_buy_id=past.pk)
 
         # Name check

@@ -18,46 +18,27 @@ from django.utils import timezone as django_tz
 logger = logging.getLogger(__name__)
 
 
-def _parse_buy_from_payload(payload: dict, watched_addresses: set[str] | None = None) -> Optional[dict]:
+def _parse_buys_from_payload(payload: dict, watched_addresses: set[str] | None = None) -> list[dict]:
     """
     Extract the fields we need from a Helius enhanced-webhook payload.
-
-    Returns a dict with keys:
-        wallet_address, mint, name, symbol, logo_url, amount, timestamp,
-        tx_signature, amount_spent, spent_symbol
-    or None if this event isn't a buy we care about.
-
-    Helius enhanced SWAP payloads look like:
-    {
-      "type": "SWAP",
-      "source": "RAYDIUM",
-      "feePayer": "<wallet address>",
-      "timestamp": 1234567890,
-      "tokenTransfers": [
-        {"toUserAccount": "<wallet>", "mint": "<token mint>", "tokenAmount": 1234},
-        ...
-      ],
-      "nativeTransfers": [...],
-      ...
-    }
-    We match against watched wallets by searching tokenTransfers recipient accounts,
-    ensuring we detect swaps routed through Telegram trading bots (Trojan, BonkBot, Maestro).
+    Returns a list of dicts (one for each matched watched wallet in the transaction)
+    with keys: wallet_address, mint, name, symbol, logo_url, amount, timestamp,
+    tx_signature, amount_spent, spent_symbol.
     """
     event_type = payload.get("type", "")
     if event_type != "SWAP":
-        return None
+        return []
 
     # Get watched wallets from DB
     if watched_addresses is None:
         from tracker.models import Wallet
         watched_addresses = set(Wallet.objects.values_list("address", flat=True))
     if not watched_addresses:
-        return None
+        return []
 
-    # Find the target token transaction to a watched wallet
     token_transfers = payload.get("tokenTransfers", [])
-    target_transfer = None
-    buyer_wallet_address = None
+    if not token_transfers:
+        return []
 
     # Exclude base tokens / stablecoins as the bought token
     IGNORED_MINTS = {
@@ -65,26 +46,6 @@ def _parse_buy_from_payload(payload: dict, watched_addresses: set[str] | None = 
         "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
         "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",  # USDT
     }
-
-    for transfer in token_transfers:
-        recipient = transfer.get("toUserAccount")
-        if recipient in watched_addresses:
-            mint = transfer.get("mint")
-            if mint in IGNORED_MINTS:
-                continue
-            target_transfer = transfer
-            buyer_wallet_address = recipient
-            break
-
-    if not target_transfer or not buyer_wallet_address:
-        return None
-
-    bought_mint = target_transfer.get("mint")
-    raw_amount = target_transfer.get("tokenAmount")
-    try:
-        amount = Decimal(str(raw_amount)) if raw_amount is not None else None
-    except Exception:
-        amount = None
 
     timestamp_unix = payload.get("timestamp")
     if timestamp_unix:
@@ -96,52 +57,65 @@ def _parse_buy_from_payload(payload: dict, watched_addresses: set[str] | None = 
     else:
         timestamp = django_tz.now()
 
-    # Now find what this buyer spent
-    spent_mint = "So11111111111111111111111111111111111111112"
-    spent_amount = Decimal("0.0")
-    spent_symbol = "SOL"
+    tx_signature = payload.get("signature") or None
 
-    # 1. Check nativeTransfers for spent SOL from the buyer's wallet
-    native_transfers = payload.get("nativeTransfers", [])
-    for transfer in native_transfers:
-        if transfer.get("fromUserAccount") == buyer_wallet_address:
-            raw_lamports = transfer.get("amount", 0)
+    buys = []
+    # Identify all token transfers going to any watched address
+    for transfer in token_transfers:
+        recipient = transfer.get("toUserAccount")
+        if recipient in watched_addresses:
+            mint = transfer.get("mint")
+            if mint in IGNORED_MINTS:
+                continue
+
+            raw_amount = transfer.get("tokenAmount")
             try:
-                spent_amount = Decimal(str(raw_lamports)) / Decimal("1000000000")
+                amount = Decimal(str(raw_amount)) if raw_amount is not None else None
             except Exception:
-                spent_amount = Decimal("0.0")
-            spent_symbol = "SOL"
-            break
+                amount = None
 
-    # 2. Check tokenTransfers for spent SPL token (e.g. USDC, WSOL) if native SOL spent is 0
-    if spent_amount == Decimal("0.0"):
-        for transfer in token_transfers:
-            if transfer.get("fromUserAccount") == buyer_wallet_address:
-                mint = transfer.get("mint")
-                if mint != bought_mint:
-                    raw_amount = transfer.get("tokenAmount")
+            # Now find what this specific recipient spent in this transaction
+            spent_amount = Decimal("0.0")
+            spent_symbol = "SOL"
+
+            native_transfers = payload.get("nativeTransfers", [])
+            for native_tx in native_transfers:
+                if native_tx.get("fromUserAccount") == recipient:
+                    raw_lamports = native_tx.get("amount", 0)
                     try:
-                        spent_amount = Decimal(str(raw_amount)) if raw_amount is not None else Decimal("0.0")
+                        spent_amount = Decimal(str(raw_lamports)) / Decimal("1000000000")
                     except Exception:
                         spent_amount = Decimal("0.0")
-                    spent_mint = mint
-                    spent_symbol = transfer.get("tokenSymbol", "TOKEN")
+                    spent_symbol = "SOL"
                     break
 
-    tx_signature = payload.get("signature", "")
+            if spent_amount == Decimal("0.0"):
+                for token_tx in token_transfers:
+                    if token_tx.get("fromUserAccount") == recipient:
+                        tok_mint = token_tx.get("mint")
+                        if tok_mint != mint:
+                            tok_raw_amount = token_tx.get("tokenAmount")
+                            try:
+                                spent_amount = Decimal(str(tok_raw_amount)) if tok_raw_amount is not None else Decimal("0.0")
+                            except Exception:
+                                spent_amount = Decimal("0.0")
+                            spent_symbol = token_tx.get("tokenSymbol", "TOKEN")
+                            break
 
-    return {
-        "wallet_address": buyer_wallet_address,
-        "mint": bought_mint,
-        "name": target_transfer.get("tokenName", ""),
-        "symbol": target_transfer.get("tokenSymbol", ""),
-        "logo_url": target_transfer.get("tokenIcon", ""),
-        "amount": amount,
-        "timestamp": timestamp,
-        "tx_signature": tx_signature,
-        "amount_spent": spent_amount,
-        "spent_symbol": spent_symbol,
-    }
+            buys.append({
+                "wallet_address": recipient,
+                "mint": mint,
+                "name": transfer.get("tokenName", ""),
+                "symbol": transfer.get("tokenSymbol", ""),
+                "logo_url": transfer.get("tokenIcon", ""),
+                "amount": amount,
+                "timestamp": timestamp,
+                "tx_signature": tx_signature,
+                "amount_spent": spent_amount,
+                "spent_symbol": spent_symbol,
+            })
+
+    return buys
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
@@ -168,180 +142,184 @@ def process_buy_event(self, payload: dict):
     from datetime import timedelta
 
     try:
-        buy_data = _parse_buy_from_payload(payload)
-        if buy_data is None:
-            logger.debug("Payload is not a trackable buy — skipping.")
+        buy_events = _parse_buys_from_payload(payload)
+        if not buy_events:
+            logger.debug("Payload has no trackable buys — skipping.")
             return
 
-        # Only process wallets we're watching
-        try:
-            wallet = Wallet.objects.get(address=buy_data["wallet_address"])
-        except Wallet.DoesNotExist:
-            logger.debug("Wallet %s not in watch list — skipping.", buy_data["wallet_address"])
-            return
-
-        # Check if transaction has already been processed to ensure idempotency
-        tx_sig = buy_data.get("tx_signature")
-        if tx_sig:
-            if TokenBuy.objects.filter(tx_signature=tx_sig).exists():
-                logger.info("Transaction %s already processed — skipping.", tx_sig)
-                return
-
-        # Check for near-duplicate by wallet, contract_address, and timestamp within 5 seconds
-        time_min = buy_data["timestamp"] - timedelta(seconds=5)
-        time_max = buy_data["timestamp"] + timedelta(seconds=5)
-        if TokenBuy.objects.filter(
-            wallet=wallet,
-            contract_address=buy_data["mint"],
-            timestamp__range=(time_min, time_max)
-        ).exists():
-            logger.info(
-                "A TokenBuy for wallet %s, mint %s around timestamp %s already exists (5s window) — skipping.",
-                wallet.address,
-                buy_data["mint"],
-                buy_data["timestamp"]
-            )
-            return
-
-        # Fetch missing metadata from Helius if the payload didn't include it
-        if not buy_data["name"] or not buy_data["symbol"]:
-            meta = helius_api.get_token_metadata(buy_data["mint"])
-            buy_data["name"] = buy_data["name"] or meta["name"]
-            buy_data["symbol"] = buy_data["symbol"] or meta["symbol"]
-            buy_data["logo_url"] = buy_data["logo_url"] or meta["logo_url"]
-
-        # Compute logo hash now, store it so future comparisons are instant
-        logo_hash = compute_logo_hash(buy_data["logo_url"]) if buy_data["logo_url"] else ""
-
-        # Save the buy
-        new_buy = TokenBuy.objects.create(
-            wallet=wallet,
-            name=buy_data["name"],
-            symbol=buy_data["symbol"],
-            logo_url=buy_data["logo_url"],
-            logo_hash=logo_hash or "",
-            contract_address=buy_data["mint"],
-            amount=buy_data["amount"],
-            timestamp=buy_data["timestamp"],
-            tx_signature=tx_sig,
-            amount_spent=buy_data["amount_spent"],
-            spent_symbol=buy_data["spent_symbol"],
-            raw_payload=payload,
-        )
-
-        # Get all past buys for this wallet (excluding the one we just saved)
-        past_buys = TokenBuy.objects.filter(wallet=wallet).exclude(pk=new_buy.pk)
-
-        # Score token risk using live DexScreener data + AI
-        token_risk = get_token_risk(
-            name=new_buy.name or "Unknown",
-            symbol=new_buy.symbol or "?",
-            contract_address=new_buy.contract_address,
-        )
-
-        wallet_context = ""
-        # Build wallet context from recent history (only if AI is enabled)
-        if settings.OPENROUTER_API_KEY:
-            recent_buys_data = [
-                {
-                    "name": b.name or "?",
-                    "symbol": b.symbol or "?",
-                    "timestamp_str": b.timestamp.strftime("%b %d"),
-                }
-                for b in past_buys.order_by("-timestamp")[:15]
-            ]
-            wallet_context = get_wallet_context(
-                wallet_nickname=wallet.nickname,
-                recent_buys=recent_buys_data,
-            )
-
-        # Run matching
-        matches = run_all_checks(new_buy, past_buys)
-
-        for match_result in matches:
+        for buy_data in buy_events:
+            # Only process wallets we're watching
             try:
-                matched_buy = TokenBuy.objects.get(pk=match_result.matched_buy_id)
-            except TokenBuy.DoesNotExist:
+                wallet = Wallet.objects.get(address=buy_data["wallet_address"])
+            except Wallet.DoesNotExist:
+                logger.debug("Wallet %s not in watch list — skipping.", buy_data["wallet_address"])
                 continue
 
-            alert = MatchAlert.objects.create(
-                new_buy=new_buy,
-                matched_buy=matched_buy,
-                match_type=match_result.match_type,
-                name_score=match_result.name_score,
-                symbol_score=match_result.symbol_score,
-                logo_distance=match_result.logo_distance,
-            )
+            # Check if transaction has already been processed for this wallet to ensure idempotency
+            tx_sig = buy_data.get("tx_signature")
+            if tx_sig:
+                if TokenBuy.objects.filter(wallet=wallet, tx_signature=tx_sig).exists():
+                    logger.info("Transaction %s already processed for wallet %s — skipping.", tx_sig, wallet.nickname)
+                    continue
 
-            # Check if this exact pair has already been alerted for this wallet before
-            already_alerted = MatchAlert.objects.filter(
-                new_buy__wallet=wallet,
-                new_buy__contract_address=new_buy.contract_address,
-                matched_buy__contract_address=matched_buy.contract_address,
-            ).exclude(pk=alert.pk).exists()
-
-            if already_alerted:
+            # Check for near-duplicate by wallet, contract_address, and timestamp within 5 seconds
+            time_min = buy_data["timestamp"] - timedelta(seconds=5)
+            time_max = buy_data["timestamp"] + timedelta(seconds=5)
+            if TokenBuy.objects.filter(
+                wallet=wallet,
+                contract_address=buy_data["mint"],
+                timestamp__range=(time_min, time_max)
+            ).exists():
                 logger.info(
-                    "MatchAlert saved to database, but Telegram alert skipped (already sent before for this pair: new_buy=%s, matched_buy=%s).",
-                    new_buy.contract_address,
-                    matched_buy.contract_address,
+                    "A TokenBuy for wallet %s, mint %s around timestamp %s already exists (5s window) — skipping.",
+                    wallet.address,
+                    buy_data["mint"],
+                    buy_data["timestamp"]
                 )
                 continue
 
-            time_diff = format_time_diff(new_buy.timestamp, matched_buy.timestamp)
+            # Fetch missing metadata from Helius if the payload didn't include it
+            if not buy_data["name"] or not buy_data["symbol"]:
+                meta = helius_api.get_token_metadata(buy_data["mint"])
+                buy_data["name"] = buy_data["name"] or meta["name"]
+                buy_data["symbol"] = buy_data["symbol"] or meta["symbol"]
+                buy_data["logo_url"] = buy_data["logo_url"] or meta["logo_url"]
 
-            match_parts = []
-            if match_result.name_score is not None:
-                if match_result.name_score >= settings.NAME_MATCH_THRESHOLD:
-                    match_parts.append(f"similar name ({match_result.name_score:.0f}%)")
-            if match_result.symbol_score is not None:
-                if match_result.symbol_score >= settings.SYMBOL_MATCH_THRESHOLD:
-                    match_parts.append(f"similar symbol ({match_result.symbol_score:.0f}%)")
-            if match_result.logo_distance is not None:
-                if match_result.logo_distance <= settings.LOGO_MATCH_THRESHOLD:
-                    match_parts.append("similar logo")
-            match_reason = " and ".join(match_parts) if match_parts else match_result.match_type
+            # Compute logo hash now, store it so future comparisons are instant
+            logo_hash = compute_logo_hash(buy_data["logo_url"]) if buy_data["logo_url"] else ""
 
-            ai_explanation = ""
+            # Save the buy
+            new_buy = TokenBuy.objects.create(
+                wallet=wallet,
+                name=buy_data["name"],
+                symbol=buy_data["symbol"],
+                logo_url=buy_data["logo_url"],
+                logo_hash=logo_hash or "",
+                contract_address=buy_data["mint"],
+                amount=buy_data["amount"],
+                timestamp=buy_data["timestamp"],
+                tx_signature=tx_sig,
+                amount_spent=buy_data["amount_spent"],
+                spent_symbol=buy_data["spent_symbol"],
+                raw_payload=payload,
+            )
+
+            # Get all past buys for this wallet (excluding the one we just saved)
+            past_buys = TokenBuy.objects.filter(wallet=wallet).exclude(pk=new_buy.pk)
+
+            # Score token risk using live DexScreener data + AI
+            token_risk = get_token_risk(
+                name=new_buy.name or "Unknown",
+                symbol=new_buy.symbol or "?",
+                contract_address=new_buy.contract_address,
+            )
+
+            wallet_context = ""
+            # Build wallet context from recent history (only if AI is enabled)
             if settings.OPENROUTER_API_KEY:
-                ai_explanation = get_ai_explanation(
-                    new_name=new_buy.name or "Unknown",
-                    new_symbol=new_buy.symbol or "?",
-                    past_name=matched_buy.name or "Unknown",
-                    past_symbol=matched_buy.symbol or "?",
-                    time_diff=time_diff,
-                    match_reason=match_reason,
+                recent_buys_data = [
+                    {
+                        "name": b.name or "?",
+                        "symbol": b.symbol or "?",
+                        "timestamp_str": b.timestamp.strftime("%b %d"),
+                    }
+                    for b in past_buys.order_by("-timestamp")[:15]
+                ]
+                wallet_context = get_wallet_context(
                     wallet_nickname=wallet.nickname,
+                    recent_buys=recent_buys_data,
                 )
 
-            send_alert(
-                alert,
-                ai_explanation=ai_explanation,
-                token_risk=token_risk,
-                wallet_context=wallet_context,
-            )
+            # Run matching
+            matches = run_all_checks(new_buy, past_buys)
 
-            logger.info(
-                "Alert sent: %s matched %s via %s",
-                new_buy,
-                matched_buy,
-                match_result.match_type,
-            )
+            # Only process the highest scoring match if multiple exist
+            if matches:
+                matches.sort(key=lambda m: max(m.name_score or 0.0, m.symbol_score or 0.0), reverse=True)
+                best_match = matches[0]
 
-        # DEBUG mode: notify if a buy was successfully processed but no matches were found
-        from django.conf import settings
-        if not matches and settings.DEBUG:
-            from tracker.telegram_bot import _send_message, _get_allowed_user_ids
-            chat_ids = _get_allowed_user_ids()
-            for chat_id in chat_ids:
-                if chat_id != 0:
-                    _send_message(
-                        chat_id,
-                        f"ℹ️ <b>Buy Processed:</b> {new_buy.name or '?'} ({new_buy.symbol or '?'})\n"
-                        f"Wallet: {wallet.nickname}\n"
-                        f"Compared against {past_buys.count()} past buys. No similar tokens found.",
-                        parse_mode="HTML"
+                try:
+                    matched_buy = TokenBuy.objects.get(pk=best_match.matched_buy_id)
+                except TokenBuy.DoesNotExist:
+                    continue
+
+                alert = MatchAlert.objects.create(
+                    new_buy=new_buy,
+                    matched_buy=matched_buy,
+                    match_type=best_match.match_type,
+                    name_score=best_match.name_score,
+                    symbol_score=best_match.symbol_score,
+                    logo_distance=best_match.logo_distance,
+                )
+
+                # Check if this exact pair has already been alerted for this wallet before
+                already_alerted = MatchAlert.objects.filter(
+                    new_buy__wallet=wallet,
+                    new_buy__contract_address=new_buy.contract_address,
+                    matched_buy__contract_address=matched_buy.contract_address,
+                ).exclude(pk=alert.pk).exists()
+
+                if already_alerted:
+                    logger.info(
+                        "MatchAlert saved to database, but Telegram alert skipped (already sent before for this pair: new_buy=%s, matched_buy=%s).",
+                        new_buy.contract_address,
+                        matched_buy.contract_address,
                     )
+                    continue
+
+                time_diff = format_time_diff(new_buy.timestamp, matched_buy.timestamp)
+
+                match_parts = []
+                if best_match.name_score is not None:
+                    if best_match.name_score >= settings.NAME_MATCH_THRESHOLD:
+                        match_parts.append(f"similar name ({best_match.name_score:.0f}%)")
+                if best_match.symbol_score is not None:
+                    if best_match.symbol_score >= settings.SYMBOL_MATCH_THRESHOLD:
+                        match_parts.append(f"similar symbol ({best_match.symbol_score:.0f}%)")
+                if best_match.logo_distance is not None:
+                    if best_match.logo_distance <= settings.LOGO_MATCH_THRESHOLD:
+                        match_parts.append("similar logo")
+                match_reason = " and ".join(match_parts) if match_parts else best_match.match_type
+
+                ai_explanation = ""
+                if settings.OPENROUTER_API_KEY:
+                    ai_explanation = get_ai_explanation(
+                        new_name=new_buy.name or "Unknown",
+                        new_symbol=new_buy.symbol or "?",
+                        past_name=matched_buy.name or "Unknown",
+                        past_symbol=matched_buy.symbol or "?",
+                        time_diff=time_diff,
+                        match_reason=match_reason,
+                        wallet_nickname=wallet.nickname,
+                    )
+
+                send_alert(
+                    alert,
+                    ai_explanation=ai_explanation,
+                    token_risk=token_risk,
+                    wallet_context=wallet_context,
+                )
+
+                logger.info(
+                    "Alert sent: %s matched %s via %s",
+                    new_buy,
+                    matched_buy,
+                    best_match.match_type,
+                )
+
+            # DEBUG mode: notify if a buy was successfully processed but no matches were found
+            if not matches and settings.DEBUG:
+                from tracker.telegram_bot import _send_message, _get_allowed_user_ids
+                chat_ids = _get_allowed_user_ids()
+                for chat_id in chat_ids:
+                    if chat_id != 0:
+                        _send_message(
+                            chat_id,
+                            f"ℹ️ <b>Buy Processed:</b> {new_buy.name or '?'} ({new_buy.symbol or '?'})\n"
+                            f"Wallet: {wallet.nickname}\n"
+                            f"Compared against {past_buys.count()} past buys. No similar tokens found.",
+                            parse_mode="HTML"
+                        )
 
     except Exception as exc:
         logger.exception("process_buy_event failed: %s", exc)
