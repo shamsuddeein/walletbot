@@ -62,6 +62,32 @@ def _send_message(chat_id: int | str, text: str, parse_mode: str = "HTML", reply
         return False
 
 
+def _send_photo(chat_id: int | str, photo_url: str, caption: str, parse_mode: str = "HTML", reply_markup: dict | None = None) -> bool:
+    """Send a photo via the Telegram Bot API HTTP endpoint."""
+    if len(caption) > 1024:
+        logger.warning("Caption length %d exceeds Telegram limit of 1024. Falling back to sendMessage.", len(caption))
+        return False
+
+    payload = {
+        "chat_id": chat_id,
+        "photo": photo_url,
+        "caption": caption,
+        "parse_mode": parse_mode,
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    try:
+        r = requests.post(
+            f"{TELEGRAM_API_BASE}/sendPhoto",
+            json=payload,
+            timeout=10,
+        )
+        r.raise_for_status()
+        return True
+    except Exception as exc:
+        logger.error("Telegram sendPhoto failed: %s", exc)
+        return False
+
 
 def _get_allowed_user_ids() -> list[int]:
     """
@@ -228,7 +254,7 @@ def format_time_diff(t1, t2) -> str:
     return ", ".join(parts)
 
 
-def send_alert(alert, token_risk: dict | None = None, dev_link_text: str = "") -> bool:
+def send_alert(alert, token_risk: dict | None = None, dev_link_text: str = "", **kwargs) -> bool:
     from django.utils import timezone as django_tz
 
     new = alert.new_buy
@@ -326,14 +352,28 @@ def send_alert(alert, token_risk: dict | None = None, dev_link_text: str = "") -
         return False
 
     success = True
+    logo_url = new.logo_url
     for chat_id in chat_ids:
-        ok = _send_message(
-            chat_id, 
-            text, 
-            parse_mode="HTML", 
-            reply_markup=reply_markup,
-            link_preview_options=link_preview_opts
-        )
+        ok = False
+        if logo_url:
+            ok = _send_photo(
+                chat_id=chat_id,
+                photo_url=logo_url,
+                caption=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+            if not ok:
+                logger.info("sendPhoto failed or caption too long; falling back to sendMessage for chat_id %s", chat_id)
+        
+        if not ok:
+            ok = _send_message(
+                chat_id, 
+                text, 
+                parse_mode="HTML", 
+                reply_markup=reply_markup,
+                link_preview_options=link_preview_opts
+            )
         if not ok:
             success = False
     return success

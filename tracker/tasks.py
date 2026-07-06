@@ -276,6 +276,19 @@ def process_buy_event(self, payload: dict):
                             f"(bought by {past_dev.wallet.nickname} {dev_diff} ago)"
                         )
 
+                # Check minimum liquidity filter
+                liquidity_usd = 0
+                if token_risk and isinstance(token_risk, dict) and "dex_data" in token_risk:
+                    liquidity_usd = token_risk["dex_data"].get("liquidity_usd") or 0
+
+                if liquidity_usd < settings.MIN_LIQUIDITY_USD:
+                    logger.info(
+                        "Skipped alert: liquidity too low ($%s) for %s",
+                        liquidity_usd,
+                        new_buy.name or new_buy.symbol or "Unknown"
+                    )
+                    continue
+
                 send_alert(
                     alert,
                     token_risk=token_risk,
@@ -510,9 +523,10 @@ def backfill_wallet_history_task(address: str, nickname: str, chat_id: int):
                     continue
 
                 # Parse transaction
-                buy_data = _parse_buy_from_payload(tx, watched_addresses=watched_addresses)
-                if not buy_data:
+                buys = _parse_buys_from_payload(tx, watched_addresses=watched_addresses)
+                if not buys:
                     continue
+                buy_data = buys[0]
 
                 # Check for near-duplicate by wallet, contract_address, and timestamp within 5 seconds
                 time_min = buy_data["timestamp"] - timedelta(seconds=5)

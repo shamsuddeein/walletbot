@@ -116,9 +116,12 @@ OPENROUTER_API_KEY = config("OPENROUTER_API_KEY", default="")
 WEBHOOK_BASE_URL = config("WEBHOOK_BASE_URL", default="http://localhost:8000")
 
 # Matching thresholds (0–100)
-NAME_MATCH_THRESHOLD = config("NAME_MATCH_THRESHOLD", default=75, cast=int)
+NAME_MATCH_THRESHOLD = config("NAME_MATCH_THRESHOLD", default=85, cast=int)
 SYMBOL_MATCH_THRESHOLD = config("SYMBOL_MATCH_THRESHOLD", default=80, cast=int)
 LOGO_MATCH_THRESHOLD = config("LOGO_MATCH_THRESHOLD", default=10, cast=int)  # imagehash distance ≤ this
+
+# Minimum liquidity filter for alerts (USD)
+MIN_LIQUIDITY_USD = config("MIN_LIQUIDITY_USD", default=500, cast=int)
 
 MAX_WALLETS = 10
 

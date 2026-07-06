@@ -16,7 +16,7 @@ from tracker.matching import check_name, check_symbol, check_logo
 
 
 THRESHOLDS = dict(
-    NAME_MATCH_THRESHOLD=75,
+    NAME_MATCH_THRESHOLD=85,
     SYMBOL_MATCH_THRESHOLD=80,
     LOGO_MATCH_THRESHOLD=10,
 )
@@ -30,29 +30,29 @@ class NameMatchingTests(TestCase):
     def test_identical_name(self):
         """The Black Bull vs The Black Bull — exact match."""
         score = check_name("The Black Bull", "The Black Bull")
-        self.assertGreaterEqual(score, 75, f"Expected ≥75, got {score}")
+        self.assertGreaterEqual(score, 85, f"Expected ≥85, got {score}")
 
     def test_identical_name_dumacrats(self):
         """Dumacrats vs Dumacrats — exact match."""
         score = check_name("Dumacrats", "Dumacrats")
-        self.assertGreaterEqual(score, 75, f"Expected ≥75, got {score}")
+        self.assertGreaterEqual(score, 85, f"Expected ≥85, got {score}")
 
     def test_near_identical_name_v2(self):
         """The White Whale vs The White Whale V2 — near-identical, must catch."""
         score = check_name("The White Whale", "The White Whale V2")
-        self.assertGreaterEqual(score, 75, f"Expected ≥75, got {score}")
+        self.assertGreaterEqual(score, 85, f"Expected ≥85, got {score}")
 
     def test_case_insensitive(self):
         """Name check should be case-insensitive."""
         score = check_name("THE BLACK BULL", "the black bull")
-        self.assertGreaterEqual(score, 75)
+        self.assertGreaterEqual(score, 85)
 
     # ── Negative cases (must NOT trigger) ────────────────────────────────────
 
     def test_unrelated_names(self):
         """Completely unrelated names should not match."""
         score = check_name("Solana Apes", "Moon Cats")
-        self.assertLess(score, 75, f"Expected <75, got {score}")
+        self.assertLess(score, 85, f"Expected <85, got {score}")
 
     def test_empty_name(self):
         """Empty name should return 0."""

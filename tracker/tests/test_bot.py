@@ -4,8 +4,7 @@ from tracker.telegram_bot import cmd_natural_language
 
 class BotConfirmationTests(IsolatedAsyncioTestCase):
     def setUp(self):
-        # Start patcher for owner access control
-        self.patcher_allowed = patch("tracker.telegram_bot._get_allowed_user_id", return_value=12345)
+        self.patcher_allowed = patch("tracker.telegram_bot._get_allowed_user_ids", return_value=[12345])
         self.mock_allowed = self.patcher_allowed.start()
         
         self.update = MagicMock()
