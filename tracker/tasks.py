@@ -182,8 +182,8 @@ def process_buy_event(self, payload: dict):
                 )
                 continue
 
-            # Fetch missing metadata from Helius if the payload didn't include it
-            if not buy_data["name"] or not buy_data["symbol"]:
+            # Fetch missing metadata (name, symbol, or logo) from Helius if any are missing
+            if not buy_data["name"] or not buy_data["symbol"] or not buy_data["logo_url"]:
                 meta = helius_api.get_token_metadata(buy_data["mint"])
                 buy_data["name"] = buy_data["name"] or meta["name"]
                 buy_data["symbol"] = buy_data["symbol"] or meta["symbol"]
@@ -558,7 +558,7 @@ def backfill_wallet_history_task(address: str, nickname: str, chat_id: int):
                     continue
 
                 # Fetch missing metadata
-                if not buy_data["name"] or not buy_data["symbol"]:
+                if not buy_data["name"] or not buy_data["symbol"] or not buy_data["logo_url"]:
                     meta = helius_api.get_token_metadata(buy_data["mint"])
                     buy_data["name"] = buy_data["name"] or meta["name"]
                     buy_data["symbol"] = buy_data["symbol"] or meta["symbol"]

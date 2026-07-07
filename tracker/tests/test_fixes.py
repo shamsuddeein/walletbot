@@ -613,3 +613,45 @@ class NewFixesTests(TestCase):
         self.assertTrue(success)
         mock_send_photo.assert_not_called()
         mock_send_msg.assert_called_once()
+
+    @patch("tracker.helius.get_token_metadata")
+    @patch("tracker.helius.get_token_creator", return_value="creator_addr")
+    @patch("tracker.telegram_bot.send_alert")
+    def test_process_buy_event_queries_metadata_on_missing_logo_url(self, mock_send_alert, mock_get_creator, mock_get_metadata):
+        # Setup mock return value for metadata
+        mock_get_metadata.return_value = {
+            "name": "Kori The Pom",
+            "symbol": "KORI",
+            "logo_url": "http://example.com/logo.png"
+        }
+
+        # Payload has tokenName and tokenSymbol, but NO tokenIcon (resembling real webhooks)
+        payload = {
+            "type": "SWAP",
+            "signature": "sig_missing_logo",
+            "timestamp": int(self.now.timestamp()),
+            "tokenTransfers": [
+                {
+                    "toUserAccount": self.wallet.address,
+                    "mint": "kori_addr",
+                    "tokenAmount": 100.0,
+                    "tokenName": "Kori The Pom",
+                    "tokenSymbol": "KORI",
+                }
+            ],
+            "nativeTransfers": [
+                {
+                    "fromUserAccount": self.wallet.address,
+                    "amount": 1000000000
+                }
+            ]
+        }
+
+        process_buy_event(payload)
+
+        # Assert that get_token_metadata was called to fetch the missing logo
+        mock_get_metadata.assert_called_once_with("kori_addr")
+        
+        # Verify it was saved to the database with the resolved logo URL
+        buy = TokenBuy.objects.get(contract_address="kori_addr")
+        self.assertEqual(buy.logo_url, "http://example.com/logo.png")
