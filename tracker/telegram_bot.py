@@ -507,14 +507,28 @@ def send_coordinated_alert(contract_address: str, buys: list, token_risk: dict |
         return False
 
     success = True
+    logo_url = first_buy.logo_url
     for chat_id in chat_ids:
-        ok = _send_message(
-            chat_id, 
-            text, 
-            parse_mode="HTML", 
-            reply_markup=reply_markup,
-            link_preview_options=link_preview_opts
-        )
+        ok = False
+        if logo_url:
+            ok = _send_photo(
+                chat_id=chat_id,
+                photo_url=logo_url,
+                caption=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+            if not ok:
+                logger.info("sendPhoto failed or caption too long; falling back to sendMessage for coordinated alert, chat_id %s", chat_id)
+        
+        if not ok:
+            ok = _send_message(
+                chat_id, 
+                text, 
+                parse_mode="HTML", 
+                reply_markup=reply_markup,
+                link_preview_options=link_preview_opts
+            )
         if not ok:
             success = False
     return success

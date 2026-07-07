@@ -534,3 +534,82 @@ class NewFixesTests(TestCase):
         # Run task process for second buy -> should NOT trigger coordinated buy alert again since count of unique wallets is still 2
         process_buy_event(payload2)
         mock_send_coordinated.assert_not_called()
+
+    @patch("tracker.telegram_bot._send_photo")
+    @patch("tracker.telegram_bot._send_message")
+    @patch("tracker.telegram_bot._get_allowed_user_ids", return_value=[12345])
+    def test_send_coordinated_alert_uses_photo_when_logo_present(self, mock_get_allowed, mock_send_msg, mock_send_photo):
+        from tracker.telegram_bot import send_coordinated_alert
+        
+        buy = TokenBuy.objects.create(
+            wallet=self.wallet,
+            name="Kori The Pom",
+            symbol="KORI",
+            contract_address="kori_addr",
+            timestamp=self.now,
+            amount_spent=Decimal("1.0"),
+            amount=Decimal("100.0"),
+            spent_symbol="SOL",
+            logo_url="http://example.com/kori.png",
+        )
+        
+        mock_send_photo.return_value = True
+        
+        success = send_coordinated_alert("kori_addr", [buy])
+        
+        self.assertTrue(success)
+        mock_send_photo.assert_called_once()
+        mock_send_msg.assert_not_called()
+
+    @patch("tracker.telegram_bot._send_photo")
+    @patch("tracker.telegram_bot._send_message")
+    @patch("tracker.telegram_bot._get_allowed_user_ids", return_value=[12345])
+    def test_send_coordinated_alert_falls_back_on_photo_failure(self, mock_get_allowed, mock_send_msg, mock_send_photo):
+        from tracker.telegram_bot import send_coordinated_alert
+        
+        buy = TokenBuy.objects.create(
+            wallet=self.wallet,
+            name="Kori The Pom",
+            symbol="KORI",
+            contract_address="kori_addr",
+            timestamp=self.now,
+            amount_spent=Decimal("1.0"),
+            amount=Decimal("100.0"),
+            spent_symbol="SOL",
+            logo_url="http://example.com/kori.png",
+        )
+        
+        mock_send_photo.return_value = False
+        mock_send_msg.return_value = True
+        
+        success = send_coordinated_alert("kori_addr", [buy])
+        
+        self.assertTrue(success)
+        mock_send_photo.assert_called_once()
+        mock_send_msg.assert_called_once()
+
+    @patch("tracker.telegram_bot._send_photo")
+    @patch("tracker.telegram_bot._send_message")
+    @patch("tracker.telegram_bot._get_allowed_user_ids", return_value=[12345])
+    def test_send_coordinated_alert_no_photo_when_logo_missing(self, mock_get_allowed, mock_send_msg, mock_send_photo):
+        from tracker.telegram_bot import send_coordinated_alert
+        
+        buy = TokenBuy.objects.create(
+            wallet=self.wallet,
+            name="Kori The Pom",
+            symbol="KORI",
+            contract_address="kori_addr",
+            timestamp=self.now,
+            amount_spent=Decimal("1.0"),
+            amount=Decimal("100.0"),
+            spent_symbol="SOL",
+            logo_url="", # empty
+        )
+        
+        mock_send_msg.return_value = True
+        
+        success = send_coordinated_alert("kori_addr", [buy])
+        
+        self.assertTrue(success)
+        mock_send_photo.assert_not_called()
+        mock_send_msg.assert_called_once()
