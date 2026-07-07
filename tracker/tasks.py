@@ -339,10 +339,9 @@ def process_buy_event(self, payload: dict):
                 # Get list of unique buys ordered by timestamp
                 sorted_buys = sorted(unique_wallets_buys.values(), key=lambda x: x.timestamp)
                 
-                # Deduplicate using cache key
+                # Deduplicate using atomic cache add
                 cache_key = f"coor_alert_{new_buy.contract_address}_{unique_buyer_count}"
-                if not cache.get(cache_key):
-                    cache.set(cache_key, True, 7200)  # cache for 2 hours
+                if cache.add(cache_key, True, 7200):  # atomically set if not exists, cache for 2 hours
                     send_coordinated_alert(new_buy.contract_address, sorted_buys, token_risk)
                     logger.info(
                         "Coordinated Buy Alert triggered for %s (%d wallets)",

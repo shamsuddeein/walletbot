@@ -444,3 +444,93 @@ class NewFixesTests(TestCase):
         self.assertIn("Security Checks:", text_arg)
         self.assertIn("Mint Authority:</b> ⚠️ Enabled (Dev can mint!)", text_arg)
         self.assertIn("Freeze Authority:</b> ✅ Revoked (Cannot freeze)", text_arg)
+
+    @patch("tracker.telegram_bot.send_coordinated_alert")
+    @patch("tracker.ai.get_token_risk")
+    @patch("tracker.helius.get_token_creator", return_value="creator_addr")
+    def test_coordinated_buy_alert_deduplication(self, mock_creator, mock_get_risk, mock_send_coordinated):
+        from django.core.cache import cache
+        cache.clear()
+
+        # Prepare two wallets
+        wallet1 = self.wallet
+        wallet2 = Wallet.objects.create(
+            address="TestWalletAddress2222222222222222222222222",
+            nickname="Test_Wallet_2",
+            added_by_telegram_id=12345,
+        )
+
+        mock_get_risk.return_value = {
+            "level": "MEDIUM",
+            "reason": "good liquidity",
+            "dex_data": {
+                "liquidity_usd": 10000,
+            }
+        }
+
+        # Create first past buy from wallet 1
+        TokenBuy.objects.create(
+            wallet=wallet1,
+            name="Gato Godxi",
+            symbol="Godxi",
+            contract_address="GatoContract1111111111111111111",
+            timestamp=self.now - timedelta(minutes=10),
+            amount_spent=Decimal("0.5"),
+            amount=Decimal("50.0"),
+            spent_symbol="SOL",
+        )
+
+        # Mock payload 1: wallet 2 buying the same token
+        payload1 = {
+            "type": "SWAP",
+            "signature": "sig_coord_1",
+            "timestamp": int(self.now.timestamp()),
+            "tokenTransfers": [
+                {
+                    "toUserAccount": wallet2.address,
+                    "mint": "GatoContract1111111111111111111",
+                    "tokenAmount": 100.0,
+                    "tokenName": "Gato Godxi",
+                    "tokenSymbol": "Godxi",
+                    "tokenIcon": "http://logo.url"
+                }
+            ],
+            "nativeTransfers": [
+                {
+                    "fromUserAccount": wallet2.address,
+                    "amount": 1000000000
+                }
+            ]
+        }
+
+        # Run task process for first buy -> should trigger coordinated buy alert
+        process_buy_event(payload1)
+        mock_send_coordinated.assert_called_once()
+        mock_send_coordinated.reset_mock()
+
+        # Mock payload 2: wallet 2 buying again (different transaction but same buyer count = 2)
+        payload2 = {
+            "type": "SWAP",
+            "signature": "sig_coord_2",
+            "timestamp": int(self.now.timestamp()) + 5,
+            "tokenTransfers": [
+                {
+                    "toUserAccount": wallet2.address,
+                    "mint": "GatoContract1111111111111111111",
+                    "tokenAmount": 50.0,
+                    "tokenName": "Gato Godxi",
+                    "tokenSymbol": "Godxi",
+                    "tokenIcon": "http://logo.url"
+                }
+            ],
+            "nativeTransfers": [
+                {
+                    "fromUserAccount": wallet2.address,
+                    "amount": 500000000
+                }
+            ]
+        }
+
+        # Run task process for second buy -> should NOT trigger coordinated buy alert again since count of unique wallets is still 2
+        process_buy_event(payload2)
+        mock_send_coordinated.assert_not_called()

@@ -99,6 +99,15 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
+# ── Cache Backend ─────────────────────────────────────────────
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": config("REDIS_URL", default="redis://localhost:6379/0"),
+    }
+}
+
+
 # ── App-specific settings ─────────────────────────────────────
 HELIUS_API_KEY = config("HELIUS_API_KEY", default="")
 HELIUS_WEBHOOK_ID = config("HELIUS_WEBHOOK_ID", default="")
