@@ -308,3 +308,80 @@ class BackfillTaskTests(TransactionTestCase):
         # Verify final Telegram message
         mock_send_message.assert_called_once()
         self.assertIn("loaded this wallet's last", mock_send_message.call_args[0][1])
+
+
+class RemoveTwoStepTests(IsolatedAsyncioTestCase):
+    """
+    Tests for the /remove two-step flow:
+    user types /remove with no args → bot asks for nickname → next message is
+    treated as the wallet to remove (not as an add command).
+    """
+    def setUp(self):
+        self.patcher_allowed = patch("tracker.telegram_bot._get_allowed_user_ids", return_value=[12345])
+        self.mock_allowed = self.patcher_allowed.start()
+
+        self.update = MagicMock()
+        self.update.effective_user.id = 12345
+        self.update.message = AsyncMock()
+        self.update.message.text = ""
+        self.update.message.caption = None
+
+        self.context = MagicMock()
+        self.context.user_data = {}
+        self.context.args = []
+
+    def tearDown(self):
+        self.patcher_allowed.stop()
+
+    async def test_remove_nickname_reply_creates_pending_action(self):
+        """
+        After /remove stores pending_remove_query, replying with a nickname like
+        'Ai koll 6' should NOT fall through to the fallback handler. It must
+        create a pending_action for remove_wallet instead.
+        """
+        # Simulate state after /remove was called with no args
+        self.context.user_data["pending_remove_query"] = True
+        self.update.message.text = "Ai koll 6"
+
+        await cmd_natural_language(self.update, self.context)
+
+        # pending_remove_query should be consumed
+        self.assertNotIn("pending_remove_query", self.context.user_data)
+
+        # A pending_action for remove_wallet should be set
+        self.assertEqual(
+            self.context.user_data.get("pending_action"),
+            {"action": "remove_wallet", "nickname": "Ai koll 6"}
+        )
+        # Bot should ask for confirmation
+        self.update.message.reply_text.assert_any_call(
+            "I understood: remove the wallet named Ai koll 6. Reply yes to confirm, or no to cancel.",
+            parse_mode=""
+        )
+
+    async def test_remove_address_reply_does_not_trigger_add(self):
+        """
+        After /remove stores pending_remove_query, replying with a raw Solana
+        address must be treated as a remove request — NOT as an add request.
+        """
+        self.context.user_data["pending_remove_query"] = True
+        addr = "52oc72vjNbpUhF7jNE1pPAvc17JwBTyxybFp3u7PvetG"
+        self.update.message.text = addr
+
+        await cmd_natural_language(self.update, self.context)
+
+        # pending_remove_query should be consumed
+        self.assertNotIn("pending_remove_query", self.context.user_data)
+
+        # pending_add_address must NOT have been set
+        self.assertNotIn("pending_add_address", self.context.user_data)
+
+        # A pending_action for remove_wallet should be set with the address
+        self.assertEqual(
+            self.context.user_data.get("pending_action"),
+            {"action": "remove_wallet", "nickname": addr}
+        )
+        self.update.message.reply_text.assert_any_call(
+            f"I understood: remove the wallet named {addr}. Reply yes to confirm, or no to cancel.",
+            parse_mode=""
+        )

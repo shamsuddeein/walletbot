@@ -710,6 +710,8 @@ async def cmd_remove_wallet(update, context):
         args = args[1:]
 
     if not args:
+        # Store pending state so the next message is handled as the wallet query
+        context.user_data["pending_remove_query"] = True
         await update.message.reply_text("Please specify the nickname or address of the wallet you want to remove, like this: remove wallet nickname.", parse_mode="")
         return
 
@@ -1175,6 +1177,24 @@ async def cmd_natural_language(update, context):
                 msg = "Please confirm or cancel the pending action first. Reply yes to confirm, or no to cancel."
             await update.message.reply_text(msg, parse_mode="")
             return
+
+    # Check for pending remove query (user typed /remove with no args, we asked for nickname)
+    if context.user_data.get("pending_remove_query"):
+        query = user_text.strip()
+        context.user_data.pop("pending_remove_query", None)
+        if query:
+            context.user_data["pending_action"] = {
+                "action": "remove_wallet",
+                "nickname": query
+            }
+            msg = f"I understood: remove the wallet named {query}. Reply yes to confirm, or no to cancel."
+            await update.message.reply_text(msg, parse_mode="")
+        else:
+            await update.message.reply_text(
+                "Please specify the nickname or address of the wallet you want to remove, like this: remove wallet nickname.",
+                parse_mode=""
+            )
+        return
 
     # Check for pending add address (Multi-step add wallet flow)
     pending_add_address = context.user_data.get("pending_add_address")
