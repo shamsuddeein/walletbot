@@ -118,3 +118,48 @@ class LogoMatchingTests(TestCase):
         self.assertIsNone(check_logo("f8c8f8c8f8c8f8c8", None))
         self.assertIsNone(check_logo(None, None))
         self.assertIsNone(check_logo("", "f8c8f8c8f8c8f8c8"))
+
+
+@override_settings(**THRESHOLDS)
+class NameAndSymbolCrossCheckTests(TestCase):
+    def test_identical_name_different_symbol_unrelated(self):
+        """
+        Names are identical (The White Bull vs The White Bull), but symbols are
+        completely different (LEVI vs DAVID, score 19%). Should not match.
+        """
+        from tracker.matching import MatchResult
+        res = MatchResult(
+            matched_buy_id=1,
+            name_score=100.0,
+            symbol_score=19.0, # LEVI vs DAVID
+            logo_distance=None
+        )
+        self.assertFalse(res.matched)
+
+    def test_identical_name_different_symbol_v2_relaunch(self):
+        """
+        Names are similar/identical, and symbol is highly similar (LEVI vs LEVI2, score 88%).
+        Should match (V2 relaunch).
+        """
+        from tracker.matching import MatchResult
+        res = MatchResult(
+            matched_buy_id=1,
+            name_score=100.0,
+            symbol_score=88.0, # LEVI vs LEVI2
+            logo_distance=None
+        )
+        self.assertTrue(res.matched)
+
+    def test_identical_name_different_symbol_with_logo_match(self):
+        """
+        Names are identical, symbols are different (LEVI vs DAVID), but logos match.
+        Should match.
+        """
+        from tracker.matching import MatchResult
+        res = MatchResult(
+            matched_buy_id=1,
+            name_score=100.0,
+            symbol_score=19.0,
+            logo_distance=2 # logo matched
+        )
+        self.assertTrue(res.matched)

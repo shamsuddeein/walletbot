@@ -40,10 +40,19 @@ class MatchResult:
 
     @property
     def matched(self) -> bool:
-        return (
-            (self.name_score is not None and self.name_score >= settings.NAME_MATCH_THRESHOLD)
-            or (self.symbol_score is not None and self.symbol_score >= settings.SYMBOL_MATCH_THRESHOLD)
-        )
+        # Check standard matching signals
+        has_name_match = self.name_score is not None and self.name_score >= settings.NAME_MATCH_THRESHOLD
+        has_symbol_match = self.symbol_score is not None and self.symbol_score >= settings.SYMBOL_MATCH_THRESHOLD
+        has_logo_match = self.logo_distance is not None and self.logo_distance <= settings.LOGO_MATCH_THRESHOLD
+
+        if has_name_match:
+            # If name matches, but tickers are completely different (score < 30%) and logos don't match,
+            # this is a false positive (e.g. "The White Bull" under ticker LEVI vs ticker DAVID).
+            if (self.symbol_score is not None and self.symbol_score < 30) and not has_logo_match:
+                return False
+            return True
+
+        return has_symbol_match or has_logo_match
 
     @property
     def match_type(self) -> str:
