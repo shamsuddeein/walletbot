@@ -614,10 +614,10 @@ async def handle_callback_query(update, context):
 
     data = query.data
     user_id = update.effective_user.id
-    allowed = _get_allowed_user_id()
+    allowed_ids = _get_allowed_user_ids()
 
-    # Enforce access control on callback queries
-    if allowed != 0 and user_id != allowed:
+    # Enforce access control on callback queries (supports multiple allowed users, e.g. owner + observer)
+    if allowed_ids and allowed_ids != [0] and user_id not in allowed_ids:
         await query.message.reply_text(
             "You are not authorized to use this bot.",
             parse_mode=""

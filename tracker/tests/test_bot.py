@@ -385,3 +385,66 @@ class RemoveTwoStepTests(IsolatedAsyncioTestCase):
             f"I understood: remove the wallet named {addr}. Reply yes to confirm, or no to cancel.",
             parse_mode=""
         )
+
+
+class CallbackAccessControlTests(IsolatedAsyncioTestCase):
+    """
+    Tests for multiple allowed user access control in handle_callback_query.
+    """
+    def setUp(self):
+        # Configure multiple allowed user IDs (e.g. 12345 as owner, 67890 as observer)
+        self.patcher_allowed = patch("tracker.telegram_bot._get_allowed_user_ids", return_value=[12345, 67890])
+        self.mock_allowed = self.patcher_allowed.start()
+
+        self.update = MagicMock()
+        self.update.message = None
+        
+        self.callback_query = MagicMock()
+        self.callback_query.data = "profile_sol2"
+        self.callback_query.answer = AsyncMock()
+        self.callback_query.message = AsyncMock()
+        self.update.callback_query = self.callback_query
+
+        self.context = MagicMock()
+        self.context.user_data = {}
+        self.context.args = []
+
+    def tearDown(self):
+        self.patcher_allowed.stop()
+
+    @patch("tracker.telegram_bot.cmd_profile", new_callable=AsyncMock)
+    async def test_owner_can_trigger_callback(self, mock_cmd_profile):
+        from tracker.telegram_bot import handle_callback_query
+        self.update.effective_user.id = 12345  # Owner ID
+        
+        await handle_callback_query(self.update, self.context)
+        
+        self.callback_query.answer.assert_called_once()
+        mock_cmd_profile.assert_called_once()
+        self.callback_query.message.reply_text.assert_not_called()
+
+    @patch("tracker.telegram_bot.cmd_profile", new_callable=AsyncMock)
+    async def test_observer_can_trigger_callback(self, mock_cmd_profile):
+        from tracker.telegram_bot import handle_callback_query
+        self.update.effective_user.id = 67890  # Observer ID
+        
+        await handle_callback_query(self.update, self.context)
+        
+        self.callback_query.answer.assert_called_once()
+        mock_cmd_profile.assert_called_once()
+        self.callback_query.message.reply_text.assert_not_called()
+
+    @patch("tracker.telegram_bot.cmd_profile", new_callable=AsyncMock)
+    async def test_unauthorized_user_is_blocked_from_callback(self, mock_cmd_profile):
+        from tracker.telegram_bot import handle_callback_query
+        self.update.effective_user.id = 99999  # Unauthorized ID
+        
+        await handle_callback_query(self.update, self.context)
+        
+        # callback query answer should NOT be called if unauthorized or handled at decorators/checks
+        # actually, the view block checks user_id and replies "You are not authorized to use this bot."
+        self.callback_query.message.reply_text.assert_called_once_with(
+            "You are not authorized to use this bot.",
+            parse_mode=""
+        )
+        mock_cmd_profile.assert_not_called()
