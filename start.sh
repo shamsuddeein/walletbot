@@ -38,4 +38,14 @@ if url:
         print(f"⚠️ Could not configure Redis: {e}")
 '
 
-echo "✅ Setup complete. Services are started by the Procfile."
+# Start Celery worker + beat in the background (memory-optimized: concurrency=1, max-tasks-per-child=10)
+echo "🔄 Starting Celery worker + beat in background..."
+celery -A walletbot worker -Q live_alerts,default,backfills --beat --loglevel=info --concurrency=1 --max-tasks-per-child=10 &
+
+# Start Telegram bot in the background
+echo "🤖 Starting Telegram bot in background..."
+python manage.py run_bot &
+
+# Start Gunicorn in the foreground (exec to handle container lifecycle signals)
+echo "🌐 Starting Gunicorn web server..."
+exec gunicorn --bind 0.0.0.0:${PORT:-8000} walletbot.wsgi:application
