@@ -103,13 +103,19 @@ def get_sol_price_usd() -> float:
         return cached
     try:
         r = requests.get(f"{DEXSCREENER_URL}/So11111111111111111111111111111111111111112", timeout=5)
-        data = r.json()
-        pairs = data.get("pairs") or []
-        if pairs:
-            pairs.sort(key=lambda x: x.get("liquidity", {}).get("usd", 0) or 0, reverse=True)
-            price = float(pairs[0].get("priceUsd", 140.0))
-            cache.set("sol_price_usd", price, 600)  # cache for 10 minutes
-            return price
+        if r.status_code == 200:
+            try:
+                data = r.json()
+                pairs = data.get("pairs") or []
+                if pairs:
+                    pairs.sort(key=lambda x: x.get("liquidity", {}).get("usd", 0) or 0, reverse=True)
+                    price = float(pairs[0].get("priceUsd", 140.0))
+                    cache.set("sol_price_usd", price, 600)  # cache for 10 minutes
+                    return price
+            except ValueError:
+                logger.warning("Failed to decode SOL price JSON from DexScreener (status %d)", r.status_code)
+        else:
+            logger.warning("Failed to fetch SOL price from DexScreener (status %d)", r.status_code)
     except Exception as e:
         logger.warning("Failed to fetch SOL price: %s", e)
     return 140.0
@@ -147,22 +153,28 @@ def get_token_risk(
     dex_summary = {}
     try:
         r = requests.get(f"{DEXSCREENER_URL}/{contract_address}", timeout=10)
-        data = r.json()
-        pairs = data.get("pairs") or []
-        if pairs:
-            # Sort pools by liquidity descending to get the main active pool
-            pairs.sort(key=lambda x: x.get("liquidity", {}).get("usd", 0) or 0, reverse=True)
-            p = pairs[0]
-            dex_summary = {
-                "age_hours": _pair_age_hours(p),
-                "liquidity_usd": p.get("liquidity", {}).get("usd", 0),
-                "volume_24h": p.get("volume", {}).get("h24", 0),
-                "price_change_24h": p.get("priceChange", {}).get("h24", 0),
-                "market_cap": p.get("marketCap", 0),
-                "dex": p.get("dexId", "unknown"),
-            }
+        if r.status_code == 200:
+            try:
+                data = r.json()
+                pairs = data.get("pairs") or []
+                if pairs:
+                    # Sort pools by liquidity descending to get the main active pool
+                    pairs.sort(key=lambda x: x.get("liquidity", {}).get("usd", 0) or 0, reverse=True)
+                    p = pairs[0]
+                    dex_summary = {
+                        "age_hours": _pair_age_hours(p),
+                        "liquidity_usd": p.get("liquidity", {}).get("usd", 0),
+                        "volume_24h": p.get("volume", {}).get("h24", 0),
+                        "price_change_24h": p.get("priceChange", {}).get("h24", 0),
+                        "market_cap": p.get("marketCap", 0),
+                        "dex": p.get("dexId", "unknown"),
+                    }
+            except ValueError:
+                logger.warning("DexScreener returned non-JSON response for %s (status %d)", contract_address, r.status_code)
+        else:
+            logger.warning("DexScreener fetch failed for %s (status %d)", contract_address, r.status_code)
     except Exception as exc:
-        logger.warning("DexScreener fetch failed for %s: %s", contract_address, exc)
+        logger.warning("DexScreener request error for %s: %s", contract_address, exc)
 
     is_estimated = False
     if not dex_summary:
