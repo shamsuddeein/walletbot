@@ -1053,36 +1053,49 @@ async def error_handler(update, context):
 
 def build_pattern_history_text(wallet) -> str:
     """
-    Build a text section summarizing all MatchAlert records for a given wallet.
+    Build a text section summarizing the most recent MatchAlert records for a given wallet.
     Pure rules-based, no AI.
     """
     from tracker.models import MatchAlert
-    alerts = (
+    from django.utils.html import escape
+
+    # Query total alert count
+    total_alerts = MatchAlert.objects.filter(new_buy__wallet=wallet).count()
+    
+    if total_alerts == 0:
+        return "<b>🔁 Similar Token History</b>\nNo similar-buy patterns detected yet for this wallet."
+        
+    # Query only the most recent 100 alerts for calculating stats to avoid OOM/slowness
+    recent_alerts = list(
         MatchAlert.objects
         .filter(new_buy__wallet=wallet)
         .select_related("new_buy", "matched_buy")
-        .order_by("-sent_at")
+        .order_by("-sent_at")[:100]
     )
     
-    if not alerts.exists():
-        return "<b>🔁 Similar Token History</b>\nNo similar-buy patterns detected yet for this wallet."
-        
     lines = []
-    lines.append(f"<b>🔁 Similar Token History ({alerts.count()} pairs)</b>\n")
+    lines.append(f"<b>🔁 Similar Token History (showing top 15 of {total_alerts} pairs)</b>\n")
     
     match_counts = {"name": 0, "symbol": 0, "logo": 0}
     time_gaps = []
     
-    for idx, alert in enumerate(alerts, 1):
+    # We display up to 15
+    for idx, alert in enumerate(recent_alerts[:15], 1):
         new = alert.new_buy
         past = alert.matched_buy
         
-        t_past = f"<b>{past.name or '?'}</b>"
+        # Escape HTML to prevent Telegram parsing errors
+        past_name = escape(past.name or "?")
+        past_symbol = escape(past.symbol or "?")
+        new_name = escape(new.name or "?")
+        new_symbol = escape(new.symbol or "?")
+        
+        t_past = f"<b>{past_name}</b>"
         if past.symbol:
-            t_past += f" (<b>{past.symbol}</b>)"
-        t_new = f"<b>{new.name or '?'}</b>"
+            t_past += f" (<b>{past_symbol}</b>)"
+        t_new = f"<b>{new_name}</b>"
         if new.symbol:
-            t_new += f" (<b>{new.symbol}</b>)"
+            t_new += f" (<b>{new_symbol}</b>)"
             
         lines.append(f"{idx}. {t_past} ➔ {t_new}")
         
@@ -1096,19 +1109,16 @@ def build_pattern_history_text(wallet) -> str:
         # Format match reasons
         reasons = []
         if "name" in alert.match_type:
-            match_counts["name"] += 1
             if alert.name_score is not None:
                 reasons.append(f"name {alert.name_score:.0f}%")
             else:
                 reasons.append("name")
         if "symbol" in alert.match_type:
-            match_counts["symbol"] += 1
             if alert.symbol_score is not None:
                 reasons.append(f"symbol {alert.symbol_score:.0f}%")
             else:
                 reasons.append("symbol")
         if "logo" in alert.match_type:
-            match_counts["logo"] += 1
             if alert.logo_distance is not None:
                 reasons.append(f"logo (dist {alert.logo_distance})")
             else:
@@ -1118,6 +1128,18 @@ def build_pattern_history_text(wallet) -> str:
         
         lines.append(f"   ⏱ {gap_str} apart | 💰 {spent_past} ➔ {spent_new} | {reason_str}\n")
         
+    # Calculate stats over the recent 100 alerts
+    for alert in recent_alerts:
+        new = alert.new_buy
+        past = alert.matched_buy
+        
+        if "name" in alert.match_type:
+            match_counts["name"] += 1
+        if "symbol" in alert.match_type:
+            match_counts["symbol"] += 1
+        if "logo" in alert.match_type:
+            match_counts["logo"] += 1
+            
         diff = abs(new.timestamp - past.timestamp)
         time_gaps.append(diff.total_seconds())
         
@@ -1129,13 +1151,13 @@ def build_pattern_history_text(wallet) -> str:
     if match_counts["logo"] > 0:
         summary_parts.append(f"logo ×{match_counts['logo']}")
         
-    summary_line = "📊 By match type: " + (" | ".join(summary_parts) if summary_parts else "none")
+    summary_line = "📊 By match type (last 100): " + (" | ".join(summary_parts) if summary_parts else "none")
     lines.append(summary_line)
     
     if time_gaps:
         avg_seconds = sum(time_gaps) / len(time_gaps)
         avg_days = avg_seconds / 86400.0
-        lines.append(f"⏱ Avg gap between similar buys: {avg_days:.1f} days")
+        lines.append(f"⏱ Avg gap between similar buys (last 100): {avg_days:.1f} days")
         
     return "\n".join(lines)
 

@@ -509,11 +509,11 @@ class PatternHistoryTests(TestCase):
         from tracker.telegram_bot import build_pattern_history_text
         text = build_pattern_history_text(self.wallet)
         
-        self.assertIn("Similar Token History (1 pairs)", text)
+        self.assertIn("Similar Token History (showing top 15 of 1 pairs)", text)
         self.assertIn("<b>CASHBULL</b> (<b>CASH</b>) ➔ <b>Bullcat</b> (<b>BCAT</b>)", text)
         self.assertIn("2 days apart", text)
         self.assertIn("0.50 SOL ➔ 1.20 SOL", text)
         self.assertIn("name 92%", text)
-        self.assertIn("By match type: name ×1", text)
-        self.assertIn("Avg gap between similar buys: 2.0 days", text)
+        self.assertIn("By match type (last 100): name ×1", text)
+        self.assertIn("Avg gap between similar buys (last 100): 2.0 days", text)
 
