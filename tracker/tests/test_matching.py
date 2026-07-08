@@ -58,6 +58,11 @@ class NameMatchingTests(TestCase):
         """Empty name should return 0."""
         self.assertEqual(check_name("", "The Black Bull"), 0.0)
         self.assertEqual(check_name("The Black Bull", ""), 0.0)
+    def test_short_single_word_names_strict_matching(self):
+        """Single word names like 'Bull' should not trigger on longer names like 'The Black Bull'."""
+        score = check_name("Bull", "The Black Bull")
+        self.assertLess(score, 85, f"Expected <85, got {score}")
+
 
 
 @override_settings(**THRESHOLDS)

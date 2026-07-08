@@ -38,17 +38,11 @@ class HeliusWebhookView(View):
     """
 
     def post(self, request, *args, **kwargs):
-        # ── Optional HMAC signature verification ────────────────────────────
         if settings.HELIUS_WEBHOOK_SECRET:
             sig_header = request.headers.get("Authorization", "")
-            expected = hmac.new(
-                settings.HELIUS_WEBHOOK_SECRET.encode(),
-                request.body,
-                hashlib.sha256,
-            ).hexdigest()
-            if not hmac.compare_digest(sig_header, expected):
-                logger.warning("Helius webhook: invalid signature.")
-                return HttpResponseForbidden("Invalid signature")
+            if sig_header != settings.HELIUS_WEBHOOK_SECRET:
+                logger.warning("Helius webhook: invalid authorization.")
+                return HttpResponseForbidden("Invalid authorization")
 
         # ── Parse body ───────────────────────────────────────────────────────
         try:

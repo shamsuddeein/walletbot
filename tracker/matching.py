@@ -73,9 +73,14 @@ def check_name(name_a: str, name_b: str) -> float:
     Return a rapidfuzz token_set_ratio score (0–100).
     token_set_ratio handles word re-ordering and partial matches well,
     so "The White Whale V2" correctly scores high against "The White Whale".
+    For short single-word names, fall back to stricter token_sort_ratio.
     """
     if not name_a or not name_b:
         return 0.0
+    words_a = name_a.strip().split()
+    words_b = name_b.strip().split()
+    if len(words_a) < 2 or len(words_b) < 2:
+        return fuzz.token_sort_ratio(name_a.lower(), name_b.lower())
     return fuzz.token_set_ratio(name_a.lower(), name_b.lower())
 
 

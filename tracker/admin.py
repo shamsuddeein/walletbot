@@ -25,15 +25,16 @@ class WalletAdmin(admin.ModelAdmin):
         form = super().get_form(request, obj, **kwargs)
         if "added_by_telegram_id" in form.base_fields:
             form.base_fields["added_by_telegram_id"].required = False
+            primary_id = settings.TELEGRAM_ALLOWED_USER_IDS[0] if settings.TELEGRAM_ALLOWED_USER_IDS else 0
             form.base_fields["added_by_telegram_id"].help_text = (
-                f"Optional. Defaults to primary owner ID ({settings.TELEGRAM_ALLOWED_USER_ID}) if left blank."
+                f"Optional. Defaults to primary owner ID ({primary_id}) if left blank."
             )
         return form
 
     def save_model(self, request, obj, form, change):
         # Set default telegram ID if left blank
         if not obj.added_by_telegram_id:
-            obj.added_by_telegram_id = settings.TELEGRAM_ALLOWED_USER_ID
+            obj.added_by_telegram_id = settings.TELEGRAM_ALLOWED_USER_IDS[0] if settings.TELEGRAM_ALLOWED_USER_IDS else 0
 
         # Save to database
         super().save_model(request, obj, form, change)

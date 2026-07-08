@@ -383,6 +383,10 @@ def send_alert(alert, token_risk: dict | None = None, dev_link_text: str = "", s
         f"{dev_link_text}"
     )
 
+    # Guard against Telegram message size limits (4096 characters)
+    if len(text) > 4000:
+        text = text[:3900] + "\n\n<i>[Alert text truncated due to length limits]</i>"
+
     # Construct Inline Keyboard buttons
     reply_markup = {
         "inline_keyboard": [
@@ -491,6 +495,10 @@ def send_coordinated_alert(contract_address: str, buys: list, token_risk: dict |
         f"🔑 <b>Contract:</b> <code>{contract_address}</code>"
         f"{risk_text}"
     )
+
+    # Guard against Telegram message size limits (4096 characters)
+    if len(text) > 4000:
+        text = text[:3900] + "\n\n<i>[Alert text truncated due to length limits]</i>"
 
     reply_markup = {
         "inline_keyboard": [
@@ -765,14 +773,15 @@ def db_run_test_scenario(user_id: int, scenario_num: int) -> tuple[str, int | No
     from django.utils import timezone
     from datetime import timedelta
 
-    # Find or create a test wallet
-    wallet = Wallet.objects.first()
-    if not wallet:
-        wallet = Wallet.objects.create(
-            address="TestWalletAddress1111111111111111111111111",
-            nickname="Test_Wallet",
-            added_by_telegram_id=user_id,
-        )
+    # Find or create a dedicated simulator test wallet (to avoid wiping actual tracked wallet data)
+    test_addr = "Simu111111111111111111111111111111111111111"
+    wallet, _ = Wallet.objects.get_or_create(
+        address=test_addr,
+        defaults={
+            "nickname": "Test_Wallet",
+            "added_by_telegram_id": user_id
+        }
+    )
 
     # Clean old test buys for this test wallet to keep database clean
     TokenBuy.objects.filter(wallet=wallet).delete()
