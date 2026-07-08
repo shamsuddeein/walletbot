@@ -448,3 +448,72 @@ class CallbackAccessControlTests(IsolatedAsyncioTestCase):
             parse_mode=""
         )
         mock_cmd_profile.assert_not_called()
+
+
+from django.test import TestCase
+
+class PatternHistoryTests(TestCase):
+    def setUp(self):
+        from tracker.models import Wallet, TokenBuy, MatchAlert
+        from django.utils import timezone as django_tz
+        from datetime import timedelta
+        
+        self.wallet = Wallet.objects.create(
+            address="TestWalletAddress111111111111111111111111",
+            nickname="pattern_trader",
+            added_by_telegram_id=12345
+        )
+        
+        now = django_tz.now()
+        
+        # Past buy (similar)
+        self.past_buy = TokenBuy.objects.create(
+            wallet=self.wallet,
+            name="CASHBULL",
+            symbol="CASH",
+            logo_url="http://logo.url/cash.png",
+            logo_hash="f0f0",
+            contract_address="MintCashBull11111111111111111111111111111",
+            amount=100.0,
+            timestamp=now - timedelta(days=2),
+            tx_signature="sig_past",
+            amount_spent=0.5,
+            spent_symbol="SOL",
+        )
+        
+        # New buy (trigger)
+        self.new_buy = TokenBuy.objects.create(
+            wallet=self.wallet,
+            name="Bullcat",
+            symbol="BCAT",
+            logo_url="http://logo.url/cat.png",
+            logo_hash="0f0f",
+            contract_address="MintBullcat111111111111111111111111111111",
+            amount=200.0,
+            timestamp=now,
+            tx_signature="sig_new",
+            amount_spent=1.2,
+            spent_symbol="SOL",
+        )
+        
+        self.alert = MatchAlert.objects.create(
+            new_buy=self.new_buy,
+            matched_buy=self.past_buy,
+            match_type="name",
+            name_score=92.0,
+            symbol_score=None,
+            logo_distance=None,
+        )
+
+    def test_build_pattern_history_text(self):
+        from tracker.telegram_bot import build_pattern_history_text
+        text = build_pattern_history_text(self.wallet)
+        
+        self.assertIn("Similar Token History (1 pairs)", text)
+        self.assertIn("<b>CASHBULL</b> (<b>CASH</b>) ➔ <b>Bullcat</b> (<b>BCAT</b>)", text)
+        self.assertIn("2 days apart", text)
+        self.assertIn("0.50 SOL ➔ 1.20 SOL", text)
+        self.assertIn("name 92%", text)
+        self.assertIn("By match type: name ×1", text)
+        self.assertIn("Avg gap between similar buys: 2.0 days", text)
+

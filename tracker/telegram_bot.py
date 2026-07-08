@@ -1051,14 +1051,103 @@ async def error_handler(update, context):
             pass
 
 
+def build_pattern_history_text(wallet) -> str:
+    """
+    Build a text section summarizing all MatchAlert records for a given wallet.
+    Pure rules-based, no AI.
+    """
+    from tracker.models import MatchAlert
+    alerts = (
+        MatchAlert.objects
+        .filter(new_buy__wallet=wallet)
+        .select_related("new_buy", "matched_buy")
+        .order_by("-sent_at")
+    )
+    
+    if not alerts.exists():
+        return "<b>🔁 Similar Token History</b>\nNo similar-buy patterns detected yet for this wallet."
+        
+    lines = []
+    lines.append(f"<b>🔁 Similar Token History ({alerts.count()} pairs)</b>\n")
+    
+    match_counts = {"name": 0, "symbol": 0, "logo": 0}
+    time_gaps = []
+    
+    for idx, alert in enumerate(alerts, 1):
+        new = alert.new_buy
+        past = alert.matched_buy
+        
+        t_past = f"<b>{past.name or '?'}</b>"
+        if past.symbol:
+            t_past += f" (<b>{past.symbol}</b>)"
+        t_new = f"<b>{new.name or '?'}</b>"
+        if new.symbol:
+            t_new += f" (<b>{new.symbol}</b>)"
+            
+        lines.append(f"{idx}. {t_past} ➔ {t_new}")
+        
+        # Format gap
+        gap_str = format_time_diff(new.timestamp, past.timestamp)
+        
+        # Format amounts spent
+        spent_past = f"{past.amount_spent:.2f} {past.spent_symbol}" if past.amount_spent is not None else "?"
+        spent_new = f"{new.amount_spent:.2f} {new.spent_symbol}" if new.amount_spent is not None else "?"
+        
+        # Format match reasons
+        reasons = []
+        if "name" in alert.match_type:
+            match_counts["name"] += 1
+            if alert.name_score is not None:
+                reasons.append(f"name {alert.name_score:.0f}%")
+            else:
+                reasons.append("name")
+        if "symbol" in alert.match_type:
+            match_counts["symbol"] += 1
+            if alert.symbol_score is not None:
+                reasons.append(f"symbol {alert.symbol_score:.0f}%")
+            else:
+                reasons.append("symbol")
+        if "logo" in alert.match_type:
+            match_counts["logo"] += 1
+            if alert.logo_distance is not None:
+                reasons.append(f"logo (dist {alert.logo_distance})")
+            else:
+                reasons.append("logo")
+                
+        reason_str = " + ".join(reasons)
+        
+        lines.append(f"   ⏱ {gap_str} apart | 💰 {spent_past} ➔ {spent_new} | {reason_str}\n")
+        
+        diff = abs(new.timestamp - past.timestamp)
+        time_gaps.append(diff.total_seconds())
+        
+    summary_parts = []
+    if match_counts["name"] > 0:
+        summary_parts.append(f"name ×{match_counts['name']}")
+    if match_counts["symbol"] > 0:
+        summary_parts.append(f"symbol ×{match_counts['symbol']}")
+    if match_counts["logo"] > 0:
+        summary_parts.append(f"logo ×{match_counts['logo']}")
+        
+    summary_line = "📊 By match type: " + (" | ".join(summary_parts) if summary_parts else "none")
+    lines.append(summary_line)
+    
+    if time_gaps:
+        avg_seconds = sum(time_gaps) / len(time_gaps)
+        avg_days = avg_seconds / 86400.0
+        lines.append(f"⏱ Avg gap between similar buys: {avg_days:.1f} days")
+        
+    return "\n".join(lines)
+
+
 @owner_only
 async def cmd_profile(update, context):
     """
-    /profile <nickname> — show AI-generated profile for a tracked wallet.
+    /profile <nickname> — show AI-generated profile for a tracked wallet with rules-based patterns.
     """
     from tracker.models import Wallet, TokenBuy, MatchAlert
     from tracker.ai import generate_wallet_profile
-
+ 
     args = context.args
     if not args:
         await update.message.reply_text(
@@ -1067,7 +1156,7 @@ async def cmd_profile(update, context):
             parse_mode=""
         )
         return
-
+ 
     nickname = " ".join(args).strip()
     try:
         wallet = await sync_to_async(Wallet.objects.get)(nickname__iexact=nickname)
@@ -1078,16 +1167,16 @@ async def cmd_profile(update, context):
             parse_mode=""
         )
         return
-
+ 
     await update.message.reply_text(f"Generating profile for {wallet.nickname}...")
-
+ 
     buys = await sync_to_async(list)(
         TokenBuy.objects.filter(wallet=wallet).order_by("-timestamp")[:30]
     )
     alert_count = await sync_to_async(
         MatchAlert.objects.filter(new_buy__wallet=wallet).count
     )()
-
+ 
     buy_history = [
         {
             "name": b.name or "?",
@@ -1096,14 +1185,16 @@ async def cmd_profile(update, context):
         }
         for b in buys
     ]
-
+ 
     profile = await sync_to_async(generate_wallet_profile)(
         wallet_nickname=wallet.nickname,
         buy_history=buy_history,
         alert_count=alert_count,
     )
-
+ 
     total_buys = len(buys)
+    history_text = await sync_to_async(build_pattern_history_text)(wallet)
+
     if not profile:
         profile_text = (
             f"📊 <b>Wallet Activity Report</b>\n"
@@ -1118,22 +1209,27 @@ async def cmd_profile(update, context):
         else:
             profile_text += "• No buys recorded yet."
             
-        await update.message.reply_text(
+        main_message = (
             f"👤 <b>Profile:</b> {wallet.nickname}\n"
             f"🔑 <b>Address:</b> <code>{wallet.address}</code>\n\n"
-            f"{profile_text}",
-            parse_mode="HTML"
+            f"{profile_text}"
         )
-        return
+    else:
+        main_message = (
+            f"👤 <b>Profile:</b> {wallet.nickname}\n"
+            f"🔑 <b>Address:</b> <code>{wallet.address}</code>\n"
+            f"• <b>Total buys recorded:</b> <code>{total_buys}</code>\n"
+            f"• <b>Total alerts triggered:</b> <code>{alert_count}</code>\n\n"
+            f"{profile}"
+        )
 
-    await update.message.reply_text(
-        f"👤 <b>Profile:</b> {wallet.nickname}\n"
-        f"🔑 <b>Address:</b> <code>{wallet.address}</code>\n"
-        f"• <b>Total buys recorded:</b> <code>{total_buys}</code>\n"
-        f"• <b>Total alerts triggered:</b> <code>{alert_count}</code>\n\n"
-        f"{profile}",
-        parse_mode="HTML"
-    )
+    combined_message = f"{main_message}\n\n━━━━━━━━━━━━━━━━━━━━━━━\n\n{history_text}"
+
+    if len(combined_message) <= 4000:
+        await update.message.reply_text(combined_message, parse_mode="HTML")
+    else:
+        await update.message.reply_text(main_message, parse_mode="HTML")
+        await update.message.reply_text(history_text, parse_mode="HTML")
 
 
 @owner_only
