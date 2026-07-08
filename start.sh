@@ -37,7 +37,7 @@ if url:
 
 # Start Celery worker + beat in the background (solo pool avoids fork-based OOM kills)
 echo "🔄 Starting Celery worker + beat in background..."
-celery -A walletbot worker -Q live_alerts,default,backfills --beat --loglevel=info --concurrency=1 --max-tasks-per-child=50 &
+celery -A walletbot worker -Q live_alerts,default,backfills --beat --loglevel=info --concurrency=1 --max-tasks-per-child=10 &
 
 # Start Telegram bot in the background
 echo "🤖 Starting Telegram bot in background..."

@@ -472,7 +472,7 @@ def backfill_wallet_history_task(address: str, nickname: str, chat_id: int):
     from tracker import helius as helius_api
 
     backfill_days = getattr(settings, "BACKFILL_DAYS", 30)
-    max_transactions = getattr(settings, "BACKFILL_MAX_TRANSACTIONS", 200)
+    max_transactions = getattr(settings, "BACKFILL_MAX_TRANSACTIONS", 50)
     cutoff_time = django_tz.now() - timedelta(days=backfill_days)
     
     api_key = settings.HELIUS_API_KEY
