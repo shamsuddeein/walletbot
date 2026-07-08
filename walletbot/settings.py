@@ -86,6 +86,18 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
 
+# ── Celery reliability & performance ─────────────────────────
+# Re-queue task if the worker is OOM-killed before it finishes
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+# Only pick up one task at a time — prevents memory spikes from pre-fetching
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+# Kill runaway tasks before they OOM the worker
+CELERY_TASK_SOFT_TIME_LIMIT = 60   # raises SoftTimeLimitExceeded after 60s
+CELERY_TASK_TIME_LIMIT = 90        # hard kill after 90s
+# Don't store results we never read
+CELERY_TASK_IGNORE_RESULT = True
+
 from celery.schedules import crontab
 
 CELERY_BEAT_SCHEDULE = {
@@ -140,7 +152,7 @@ MAX_WALLETS = 10
 
 # Backfill settings
 BACKFILL_DAYS = config("BACKFILL_DAYS", default=30, cast=int)
-BACKFILL_MAX_TRANSACTIONS = config("BACKFILL_MAX_TRANSACTIONS", default=200, cast=int)
+BACKFILL_MAX_TRANSACTIONS = config("BACKFILL_MAX_TRANSACTIONS", default=50, cast=int)
 
 # Authentication Backends
 AUTHENTICATION_BACKENDS = [

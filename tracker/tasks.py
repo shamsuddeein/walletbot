@@ -206,11 +206,16 @@ def process_buy_event(self, payload: dict):
                 amount_spent=buy_data["amount_spent"],
                 spent_symbol=buy_data["spent_symbol"],
                 creator=None,
-                raw_payload=payload,
             )
 
-            # Get all past buys for this wallet (excluding the one we just saved)
-            past_buys = TokenBuy.objects.filter(wallet=wallet).exclude(pk=new_buy.pk)
+            # Get past buys for this wallet — last 90 days only, minimal fields
+            cutoff = django_tz.now() - timedelta(days=90)
+            past_buys = (
+                TokenBuy.objects
+                .filter(wallet=wallet, timestamp__gte=cutoff)
+                .exclude(pk=new_buy.pk)
+                .only("id", "name", "symbol", "logo_hash", "contract_address", "wallet_id")
+            )
 
             # Score token risk using live DexScreener data (instant, rules-based)
             token_risk = get_token_risk(
@@ -319,8 +324,6 @@ def process_buy_event(self, payload: dict):
 
             # After saving the new buy, check for Coordinated buys (2+ wallets buying same token in 60m)
             from django.core.cache import cache
-            from datetime import timedelta
-            from django.utils import timezone as django_tz
             from tracker.telegram_bot import send_coordinated_alert
 
             # Query all buys of this token in the last 60 minutes
@@ -581,7 +584,6 @@ def backfill_wallet_history_task(address: str, nickname: str, chat_id: int):
                     tx_signature=tx_sig,
                     amount_spent=buy_data["amount_spent"],
                     spent_symbol=buy_data["spent_symbol"],
-                    raw_payload=tx,
                 )
 
             if reached_cutoff or not last_sig:

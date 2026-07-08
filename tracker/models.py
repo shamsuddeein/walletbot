@@ -35,7 +35,6 @@ class TokenBuy(models.Model):
     amount_spent = models.DecimalField(max_digits=20, decimal_places=9, null=True, blank=True)
     spent_symbol = models.CharField(max_length=16, default="SOL")
     creator = models.CharField(max_length=100, blank=True, null=True, db_index=True)
-    raw_payload = models.JSONField(default=dict, blank=True)  # full Helius payload for debugging
 
     class Meta:
         ordering = ["-timestamp"]
@@ -73,6 +72,9 @@ class MatchAlert(models.Model):
 
     class Meta:
         ordering = ["-sent_at"]
+        indexes = [
+            models.Index(fields=["new_buy", "matched_buy"]),
+        ]
 
     def __str__(self):
         return f"Alert: {self.new_buy} matched {self.matched_buy} via {self.match_type}"

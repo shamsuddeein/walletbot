@@ -1,6 +1,9 @@
 #!/bin/bash
 
-# Exit immediately if any command fails before backgrounding
+# Release-phase / setup script.
+# Runs migrations, static files, webhook sync, and superuser creation.
+# All services (gunicorn, celery, bot) are launched by the Procfile.
+
 set -e
 
 echo "🚀 Starting WalletBot setup..."
@@ -35,14 +38,4 @@ if url:
         print(f"⚠️ Could not configure Redis: {e}")
 '
 
-# Start Celery worker + beat in the background (solo pool avoids fork-based OOM kills)
-echo "🔄 Starting Celery worker + beat in background..."
-celery -A walletbot worker -Q live_alerts,default,backfills --beat --loglevel=info --concurrency=1 --max-tasks-per-child=10 &
-
-# Start Telegram bot in the background
-echo "🤖 Starting Telegram bot in background..."
-python manage.py run_bot &
-
-# Start Gunicorn in the foreground (exec to handle container lifecycle signals)
-echo "🌐 Starting Gunicorn web server..."
-exec gunicorn --bind 0.0.0.0:${PORT:-8000} walletbot.wsgi:application
+echo "✅ Setup complete. Services are started by the Procfile."
