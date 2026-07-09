@@ -246,11 +246,20 @@ def format_time_diff(t1, t2) -> str:
     diff = abs(t1 - t2)
     days = diff.days
     hours = diff.seconds // 3600
+    minutes = (diff.seconds % 3600) // 60
+    seconds = diff.seconds % 60
+    
     parts = []
     if days > 0:
         parts.append(f"{days} day{'s' if days != 1 else ''}")
-    if hours > 0 or not parts:
+    if hours > 0:
         parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+    if minutes > 0:
+        parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+        
+    if not parts:
+        return f"{seconds} second{'s' if seconds != 1 else ''}"
+        
     return ", ".join(parts)
 
 

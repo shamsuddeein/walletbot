@@ -517,3 +517,28 @@ class PatternHistoryTests(TestCase):
         self.assertIn("By match type (last 100): name ×1", text)
         self.assertIn("Avg gap between similar buys (last 100): 2.0 days", text)
 
+    def test_format_time_diff(self):
+        from tracker.telegram_bot import format_time_diff
+        from datetime import datetime, timezone, timedelta
+        
+        now = datetime.now(timezone.utc)
+        
+        # Test days
+        self.assertEqual(format_time_diff(now, now - timedelta(days=2)), "2 days")
+        
+        # Test hours
+        self.assertEqual(format_time_diff(now, now - timedelta(hours=4)), "4 hours")
+        
+        # Test minutes (under 1 hour)
+        self.assertEqual(format_time_diff(now, now - timedelta(minutes=35)), "35 minutes")
+        
+        # Test seconds (under 1 minute)
+        self.assertEqual(format_time_diff(now, now - timedelta(seconds=15)), "15 seconds")
+        
+        # Test combination
+        self.assertEqual(
+            format_time_diff(now, now - timedelta(days=1, hours=3, minutes=10)),
+            "1 day, 3 hours, 10 minutes"
+        )
+
+
